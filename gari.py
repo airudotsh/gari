@@ -1193,6 +1193,9 @@ def set_ask_status(text):
         pass
 
 
+CLAUDE_ENV = dict(os.environ, CLAUDE_CODE_MAX_OUTPUT_TOKENS="16000")  # 긴 논의 답변 잘림 방지
+
+
 def run_claude(prompt, model, cfg, kind, tools=None, timeout=None, cwd=None):
     """claude -p 호출 단일 관문 — JSON 출력으로 비용·시간을 계측해 usage.jsonl에 남긴다 (fail-loud)."""
     prompt = personalize(prompt, cfg)
@@ -1202,7 +1205,7 @@ def run_claude(prompt, model, cfg, kind, tools=None, timeout=None, cwd=None):
     t0 = time.time()
     r = subprocess.run(cmd, capture_output=True, text=True,
                        timeout=timeout or cfg["distill_timeout_sec"],
-                       cwd=cwd or str(GARI_HOME))
+                       cwd=cwd or str(GARI_HOME), env=CLAUDE_ENV)
     dur = round(time.time() - t0, 1)
     text, cost, tokens = "", None, None
     if r.returncode == 0 and r.stdout.strip():
@@ -1261,12 +1264,15 @@ def run_claude_stream(prompt, model, cfg, kind, tools, timeout=None, cwd=None):
     """도구를 쓰는 뇌 호출 — 이벤트를 줄 단위로 받아 실제 진행 상황을 ask-status에 중계한다."""
     prompt = personalize(prompt, cfg)
     cmd = [cfg["claude_bin"], "-p", prompt, "--model", model,
-           "--output-format", "stream-json", "--allowedTools", tools]
+           "--output-format", "stream-json", "--include-partial-messages",
+           "--allowedTools", tools]
     t0 = time.time()
     deadline = t0 + (timeout or cfg["do_timeout_sec"])
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                            text=True, cwd=cwd or str(GARI_HOME))
-    text, cost, rc = "", None, 1
+                            text=True, cwd=cwd or str(GARI_HOME), env=CLAUDE_ENV)
+    text, cost, rc, tokens = "", None, 1, None
+    buf, last_beat = "", t0
+    base = "%s 생각 중 (%s)" % ("깊이" if "deep" in kind else "답", model)
     try:
         for line in proc.stdout:
             if time.time() > deadline:
@@ -1279,16 +1285,34 @@ def run_claude_stream(prompt, model, cfg, kind, tools, timeout=None, cwd=None):
                 ev = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if ev.get("type") == "assistant":
+            et = ev.get("type")
+            if et == "stream_event":   # 실제 집필 실황 — 지금 쓰고 있는 섹션을 그대로 중계
+                delta = (ev.get("event", {}).get("delta") or {})
+                if delta.get("type") == "text_delta":
+                    buf += delta.get("text", "")
+                    if "\n" in delta.get("text", ""):
+                        heads = [l.lstrip("# ").strip() for l in buf.splitlines()
+                                 if l.startswith("##")]
+                        if heads:
+                            set_ask_status("쓰는 중 — %s · %ds" % (heads[-1][:40], time.time() - t0))
+                            last_beat = time.time()
+            elif et == "assistant":
                 for b in ev.get("message", {}).get("content", []):
                     if b.get("type") == "tool_use":
                         st = _tool_status(b.get("name", ""), b.get("input", {}) or {})
                         if st:
                             set_ask_status(st)
-            elif ev.get("type") == "result":
+                            last_beat = time.time()
+            elif et == "result":
                 text = (ev.get("result") or "").strip()
                 cost = ev.get("total_cost_usd")
+                u = ev.get("usage") or {}
+                tokens = {"in": u.get("input_tokens"), "out": u.get("output_tokens"),
+                          "cache_read": u.get("cache_read_input_tokens")}
                 rc = 0
+            if time.time() - last_beat > 4:   # 이벤트가 뜸해도 심박은 진짜(경과 시간)로
+                set_ask_status("%s · %ds" % (base, time.time() - t0))
+                last_beat = time.time()
         proc.wait(timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         proc.kill()
@@ -1296,7 +1320,7 @@ def run_claude_stream(prompt, model, cfg, kind, tools, timeout=None, cwd=None):
         with open(USAGE_LOG, "a", encoding="utf-8") as f:
             f.write(json.dumps({"ts": now_iso(), "kind": kind, "model": model,
                                 "cost_usd": cost, "sec": round(time.time() - t0, 1),
-                                "ok": rc == 0}, ensure_ascii=False) + "\n")
+                                "tokens": tokens, "ok": rc == 0}, ensure_ascii=False) + "\n")
     except OSError:
         pass
     return text, rc

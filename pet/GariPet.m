@@ -1361,16 +1361,21 @@ static NSString *hudTimeShort(NSString *iso) {
         l.drawsBackground = NO;
         l.textContainerInset = NSZeroSize;
         l.textContainer.lineFragmentPadding = 0;
+        l.textContainer.widthTracksTextView = NO;
+        l.textContainer.containerSize = NSMakeSize(maxW - 32, CGFLOAT_MAX);
         l.linkTextAttributes = @{                // 파랑 강제 해제 — 팔레트의 주황으로
             NSForegroundColorAttributeName: [NSColor colorWithCalibratedRed:1.0 green:0.62 blue:0.30 alpha:1],
             NSUnderlineStyleAttributeName: @(NSUnderlineStyleSingle),
             NSCursorAttributeName: NSCursor.pointingHandCursor};
         [l.textStorage setAttributedString:mdRender(text, 14,
             mine ? [NSColor colorWithCalibratedWhite:1.0 alpha:0.98] : fg)];
-        [l.layoutManager ensureLayoutForTextContainer:l.textContainer];
+        (void)[l.layoutManager glyphRangeForTextContainer:l.textContainer];   // 긴 답도 전체 레이아웃 강제
         NSRect used = [l.layoutManager usedRectForTextContainer:l.textContainer];
-        CGFloat lh = ceil(used.size.height);
         CGFloat tw = MIN(maxW - 32, ceil(used.size.width) + 2);   // 풍선은 말한 만큼만
+        l.textContainer.containerSize = NSMakeSize(tw, CGFLOAT_MAX);
+        (void)[l.layoutManager glyphRangeForTextContainer:l.textContainer];
+        used = [l.layoutManager usedRectForTextContainer:l.textContainer];
+        CGFloat lh = ceil(used.size.height);
         l.frame = NSMakeRect(0, 0, tw, lh + 2);
         CGFloat bw = tw + 32;
         CGFloat bh = l.frame.size.height + 24;
@@ -1730,6 +1735,28 @@ static NSString *hudTimeShort(NSString *iso) {
     [self.hudWindow makeFirstResponder:self.hudInput];
 }
 
+- (void)petColorPicked:(NSMenuItem *)item {
+    NSString *hex = item.representedObject;
+    NSString *path = [GariStateReader gariPath:@"pet/pet-config.json"];
+    NSData *d = [NSData dataWithContentsOfFile:path];
+    NSMutableDictionary *pc = d
+        ? [[NSJSONSerialization JSONObjectWithData:d options:0 error:nil] mutableCopy] : nil;
+    if (!pc) pc = [NSMutableDictionary dictionary];
+    if ([hex isEqualToString:@"#FF6600"]) {
+        [pc removeObjectForKey:@"body_color"];   // 기본색 = 설정 제거
+    } else {
+        pc[@"body_color"] = hex;
+    }
+    [pc removeObjectForKey:@"shade_color"];
+    [pc removeObjectForKey:@"belly_color"];
+    [[NSJSONSerialization dataWithJSONObject:pc options:NSJSONWritingPrettyPrinted error:nil]
+        writeToFile:path atomically:YES];
+    initPalette(pc);                              // 즉시 갈아입기
+    self.needsDisplay = YES;
+    self.happyUntil = [NSDate dateWithTimeIntervalSinceNow:1.5];   // 새 옷 기분
+    self.hopV = 4.0;
+}
+
 - (void)rightMouseDown:(NSEvent *)e {
     NSMenu *m = [[NSMenu alloc] init];
     [[m addItemWithTitle:@"현황판 (클릭)" action:@selector(toggleHud) keyEquivalent:@""] setTarget:self];
@@ -1737,6 +1764,36 @@ static NSString *hudTimeShort(NSString *iso) {
     [[m addItemWithTitle:@"보고 파일 열기" action:@selector(openReport) keyEquivalent:@""] setTarget:self];
     [[m addItemWithTitle:@"상태 확인 (gari status)" action:@selector(openStatus) keyEquivalent:@""] setTarget:self];
     [m addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *colorRoot = [[NSMenuItem alloc] initWithTitle:@"색상" action:nil keyEquivalent:@""];
+    NSMenu *colorMenu = [[NSMenu alloc] init];
+    NSData *pcData = [NSData dataWithContentsOfFile:[GariStateReader gariPath:@"pet/pet-config.json"]];
+    NSDictionary *pc = pcData ? ([NSJSONSerialization JSONObjectWithData:pcData options:0 error:nil] ?: @{}) : @{};
+    NSString *curHex = [pc[@"body_color"] isKindOfClass:NSString.class]
+        ? [pc[@"body_color"] uppercaseString] : @"#FF6600";
+    NSArray *presets = @[
+        @[@"가리발디 주황", @"#FF6600"], @[@"코랄", @"#FF6B81"],
+        @[@"골드", @"#FFB300"], @[@"민트", @"#2EC4B6"],
+        @[@"스카이", @"#3A86FF"], @[@"라벤더", @"#8E7CFF"],
+        @[@"실버", @"#B8B8BE"]];
+    for (NSArray *pr in presets) {
+        NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:pr[0]
+            action:@selector(petColorPicked:) keyEquivalent:@""];
+        it.target = self;
+        it.representedObject = pr[1];
+        NSImage *sw = [NSImage imageWithSize:NSMakeSize(14, 14) flipped:NO
+            drawingHandler:^BOOL(NSRect r) {
+            [hexColor(pr[1], NSColor.grayColor) setFill];
+            [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(r, 1, 1)
+                                             xRadius:4 yRadius:4] fill];
+            return YES;
+        }];
+        it.image = sw;
+        if ([[pr[1] uppercaseString] isEqualToString:curHex])
+            it.state = NSControlStateValueOn;
+        [colorMenu addItem:it];
+    }
+    colorRoot.submenu = colorMenu;
+    [m addItem:colorRoot];
     [[m addItemWithTitle:@"1시간 숨기기" action:@selector(hideAnHour) keyEquivalent:@""] setTarget:self];
     [m addItem:[NSMenuItem separatorItem]];
     [[m addItemWithTitle:@"가리 펫 종료 (본체는 계속 돎)" action:@selector(quit) keyEquivalent:@""] setTarget:self];
