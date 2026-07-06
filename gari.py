@@ -2269,6 +2269,26 @@ def cmd_init(args):
 
 
 def cmd_pet(args):
+    if args and args[0] == "color":
+        pc_path = GARI_HOME / "pet" / "pet-config.json"
+        pc = load_json(pc_path, {})
+        if len(args) > 1 and args[1] == "reset":
+            for k in ("body_color", "shade_color", "belly_color"):
+                pc.pop(k, None)
+            save_json(pc_path, pc)
+            print("팔레트 초기화 — 가리발디 주황으로 복귀")
+        elif len(args) > 1 and re.fullmatch(r"#?[0-9a-fA-F]{6}", args[1]):
+            pc["body_color"] = "#" + args[1].lstrip("#")
+            save_json(pc_path, pc)
+            print("몸 색 변경: %s (음영·배는 자동 파생)" % pc["body_color"])
+        else:
+            print("사용법: gari pet color <#RRGGBB|reset>")
+            return 1
+        subprocess.run(["pkill", "-f", "gari-pet"], capture_output=True)
+        subprocess.run(["pkill", "-f", "MacOS/gari"], capture_output=True)
+        time.sleep(0.5)
+        args = []   # 아래 기본 켜기 로직으로 재기동
+
     """펫(보이는 몸) 켜고 끄기: gari pet / gari pet off"""
     binpath = GARI_HOME / "pet" / "gari-pet"
     if args and args[0] == "off":

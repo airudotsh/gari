@@ -31,15 +31,41 @@ static NSString *BODY[BROWS] = {
     @"......AAA....",
 };
 
+static NSColor *gBodyColor, *gShadeColor, *gBellyColor;   // 팔레트 (pet-config.json으로 교체 가능)
+
+static NSColor *hexColor(NSString *hex, NSColor *fallback) {
+    if (![hex isKindOfClass:NSString.class]) return fallback;
+    NSString *h = [hex stringByReplacingOccurrencesOfString:@"#" withString:@""];
+    if (h.length != 6) return fallback;
+    unsigned v = 0;
+    [[NSScanner scannerWithString:h] scanHexInt:&v];
+    return [NSColor colorWithCalibratedRed:((v >> 16) & 0xFF) / 255.0
+                                     green:((v >> 8) & 0xFF) / 255.0
+                                      blue:(v & 0xFF) / 255.0 alpha:1];
+}
+
+static void initPalette(NSDictionary *cfg) {
+    NSColor *fallback = [NSColor colorWithCalibratedRed:1.000 green:0.400 blue:0.000 alpha:1]; // 가리발디 주황
+    gBodyColor = hexColor(cfg[@"body_color"], fallback);
+    // 음영·배는 몸 색에서 파생 (가리발디 비율: 채도 -14%/-22%, 색상 +5°/+9°)
+    NSColor *hsb = [gBodyColor colorUsingColorSpace:NSColorSpace.genericRGBColorSpace];
+    CGFloat h, s, b, a;
+    [hsb getHue:&h saturation:&s brightness:&b alpha:&a];
+    gShadeColor = hexColor(cfg[@"shade_color"],
+        [NSColor colorWithCalibratedHue:fmin(1, h + 5.0 / 360) saturation:s * 0.86
+                             brightness:fmin(1, b * 1.02) alpha:1]);
+    gBellyColor = hexColor(cfg[@"belly_color"],
+        [NSColor colorWithCalibratedHue:fmin(1, h + 9.0 / 360) saturation:s * 0.78
+                             brightness:fmin(1, b * 1.05) alpha:1]);
+}
+
 static NSColor *fishCellColor(int c, int y) {
     if (y < 0 || y >= BROWS || c < 0 || c >= BCOLS) return nil;
     unichar ch = [BODY[y] characterAtIndex:c];
     switch (ch) {
-        case 'A': return [NSColor colorWithCalibratedRed:1.000 green:0.400 blue:0.000 alpha:1]; // 몸 (외곽선 흡수) #FF6600
-        case 'B': return [NSColor colorWithCalibratedRed:1.000 green:0.400 blue:0.000 alpha:1]; // 몸 #FF6600
-        case 'C': return [NSColor colorWithCalibratedRed:1.000 green:0.560 blue:0.140 alpha:1]; // 음영 #FF8F24
-        case 'D': return [NSColor colorWithCalibratedRed:1.000 green:0.700 blue:0.220 alpha:1]; // 밝은 배 #FFB338
-        case 'E': return [NSColor colorWithCalibratedRed:1.000 green:0.400 blue:0.000 alpha:1]; // (미사용)
+        case 'A': case 'B': case 'E': return gBodyColor;   // 몸
+        case 'C': return gShadeColor;                       // 음영
+        case 'D': return gBellyColor;                       // 밝은 배
         default:  return nil;
     }
 }
@@ -136,14 +162,20 @@ static NSAttributedString *mdRender(NSString *text, CGFloat size, NSColor *color
     NSColor *codeBg = [NSColor colorWithCalibratedWhite:0 alpha:0.30];
     NSColor *accent = [NSColor colorWithCalibratedRed:1.00 green:0.58 blue:0.22 alpha:1];
     NSMutableParagraphStyle *para = [NSMutableParagraphStyle new];
-    para.lineSpacing = 2.5;
+    para.lineSpacing = 5.5;               // 한글 장문 기준 실질 행간 ~1.55 (ChatGPT/Claude 관행 참조)
+    para.paragraphSpacing = 9;            // 문단 사이 호흡 (빈 줄은 상자가 아니라 이 여백으로 흡수)
     NSMutableParagraphStyle *headPara = [para mutableCopy];
-    headPara.paragraphSpacingBefore = 7;
+    headPara.paragraphSpacingBefore = 13; // 제목: 위와는 멀게
+    headPara.paragraphSpacing = 5;        // 아래 본문에는 붙게 (근접성)
+    NSMutableParagraphStyle *bulletPara = [para mutableCopy];
+    bulletPara.headIndent = 15;           // 불릿 줄바꿈 시 글머리 밑으로 안 들어가게 (행잉 인덴트)
     BOOL inCode = NO;
     NSArray *lines = [text componentsSeparatedByString:@"\n"];
     for (NSUInteger li = 0; li < lines.count; li++) {
         NSString *line = lines[li];
         if ([line hasPrefix:@"```"]) { inCode = !inCode; continue; }   // 펜스 줄은 표시 안 함
+        if (!inCode && ![[line stringByTrimmingCharactersInSet:
+                NSCharacterSet.whitespaceCharacterSet] length]) continue;   // 빈 줄 상자 금지
         NSFont *lineFont = base;
         NSParagraphStyle *linePara = para;
         NSColor *lineColor = color;
@@ -159,16 +191,19 @@ static NSAttributedString *mdRender(NSString *text, CGFloat size, NSColor *color
         if ([line hasPrefix:@"### "]) { line = [line substringFromIndex:4]; lineFont = bold; linePara = headPara; }
         else if ([line hasPrefix:@"## "]) { line = [line substringFromIndex:3]; lineFont = head; linePara = headPara; }
         else if ([line hasPrefix:@"# "]) { line = [line substringFromIndex:2]; lineFont = head; linePara = headPara; }
-        if ([line hasPrefix:@"- "]) line = [@"·  " stringByAppendingString:[line substringFromIndex:2]];
+        if ([line hasPrefix:@"- "]) {
+            line = [@"·  " stringByAppendingString:[line substringFromIndex:2]];
+            if (linePara == para) linePara = bulletPara;
+        }
         if ([line containsString:@"\u00ab\ucc38\uacac"] || [line hasPrefix:@"\ucc38\uacac"])
             lineColor = accent;   // «참견 줄은 포인트 컬러
         NSArray *codeParts = [line componentsSeparatedByString:@"`"];
         for (NSUInteger ci = 0; ci < codeParts.count; ci++) {
             if (![codeParts[ci] length]) continue;
-            if (ci % 2 == 1) {   // `인라인 코드`
+            if (ci % 2 == 1) {   // `인라인 코드` — 배경칠은 줄바꿈에서 번져서 금지, 모노+밝기로만
                 [out appendAttributedString:[[NSAttributedString alloc] initWithString:codeParts[ci]
-                    attributes:@{NSFontAttributeName: mono, NSForegroundColorAttributeName: lineColor,
-                                 NSBackgroundColorAttributeName: codeBg,
+                    attributes:@{NSFontAttributeName: mono,
+                                 NSForegroundColorAttributeName: [NSColor colorWithCalibratedWhite:1.0 alpha:0.99],
                                  NSParagraphStyleAttributeName: linePara}]];
                 continue;
             }
@@ -237,6 +272,8 @@ static NSView *hudRowCard(CGFloat width) {
 
 // ---------------------------------------------------------------- 펫 뷰
 
+@class ResizeGrip;
+
 @interface PetView : NSView
 @property GariMood mood;
 @property int badge;
@@ -274,6 +311,8 @@ static NSView *hudRowCard(CGFloat width) {
 @property BOOL showSuggestions;              // 가리 정리 제안 펼침
 @property BOOL showWorkItems;                // 실무급 미결 펼침
 @property int wiggleFrames;                  // 씰룩 남은 프레임
+@property int glideFrames;                   // 유영 남은 프레임
+@property CGFloat rubAccum;                  // 부비부비 게이지
 @property NSInteger lastThreadCount;         // 페이드인 판정용
 @property (strong) NSButton *tabA, *tabB;
 @property (strong) NSView *tabLine;
@@ -283,9 +322,53 @@ static NSView *hudRowCard(CGFloat width) {
 @property (strong) NSString *chatCurrentSid;
 @property (strong) NSTimer *askTimer;
 @property (strong) NSString *lastAskStatus;
+@property (strong) ResizeGrip *hudGrip;
 @property (strong) NSString *lastQ, *lastA; // 마지막 문답
 @property BOOL asking;
 @end
+
+@interface ResizeGrip : NSView
+@property (weak) NSWindow *win;
+@property (copy) void (^onResizeEnd)(void);
+@property NSRect startFrame;
+@property NSPoint startMouse;
+@end
+
+@implementation ResizeGrip
+- (void)drawRect:(NSRect)r {
+    [[NSColor colorWithCalibratedWhite:1 alpha:0.30] setFill];
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j <= i; j++)
+            NSRectFill(NSMakeRect(self.bounds.size.width - 4 - 4 * i, 3 + 4 * j, 2, 2));
+}
+- (void)resetCursorRects {
+    if (@available(macOS 15.0, *)) {
+        [self addCursorRect:self.bounds cursor:
+            [NSCursor frameResizeCursorFromPosition:NSCursorFrameResizePositionBottomRight
+                                       inDirections:NSCursorFrameResizeDirectionsAll]];
+    } else {
+        [self addCursorRect:self.bounds cursor:NSCursor.pointingHandCursor];
+    }
+}
+- (void)mouseDown:(NSEvent *)e {
+    self.startFrame = self.win.frame;
+    self.startMouse = NSEvent.mouseLocation;
+}
+- (void)mouseDragged:(NSEvent *)e {
+    NSPoint cur = NSEvent.mouseLocation;
+    CGFloat dw = cur.x - self.startMouse.x;
+    CGFloat dh = self.startMouse.y - cur.y;   // 아래로 끌면 커짐
+    NSRect f = self.startFrame;
+    CGFloat w = MAX(380, MIN(1000, f.size.width + dw));
+    CGFloat h = MAX(430, MIN(NSScreen.mainScreen.visibleFrame.size.height, f.size.height + dh));
+    [self.win setFrame:NSMakeRect(f.origin.x, f.origin.y + (f.size.height - h), w, h)
+               display:YES];
+}
+- (void)mouseUp:(NSEvent *)e {
+    if (self.onResizeEnd) self.onResizeEnd();
+}
+@end
+
 
 @implementation PetView
 
@@ -368,6 +451,11 @@ static NSView *hudRowCard(CGFloat width) {
     if (self.wiggleFrames > 0) self.wiggleFrames -= 1;
     else if (self.mood == MoodAwake && self.hopY == 0 && arc4random_uniform(150) == 0)
         self.wiggleFrames = 12;
+    // 유영 — 가끔 느긋하게 좌우로 한 바퀴 미끄러짐
+    if (self.glideFrames > 0) self.glideFrames -= 1;
+    else if (self.mood == MoodAwake && self.hopY == 0 && arc4random_uniform(240) == 0)
+        self.glideFrames = 70;
+    self.rubAccum *= 0.94;   // 부비 게이지는 천천히 식음
     // 시선: 마우스 없으면 가끔 두리번 — 목표점으로 부드럽게 (순간이동 금지)
     if (!self.mouseInside && self.mood != MoodSleep && --self.glanceCountdown <= 0) {
         self.lookTarget = NSMakePoint(((int)arc4random_uniform(3) - 1) * 0.8,
@@ -409,7 +497,8 @@ static NSView *hudRowCard(CGFloat width) {
 // ---------------- 그리기
 - (void)drawRect:(NSRect)dirtyRect {
     CGFloat ox = (self.bounds.size.width - BCOLS * CELL) / 2
-               + (self.wiggleFrames > 0 ? sin(self.wiggleFrames * 1.1) * 2.4 : 0);
+               + (self.wiggleFrames > 0 ? sin(self.wiggleFrames * 1.1) * 2.4 : 0)
+               + (self.glideFrames > 0 ? sin(self.glideFrames / 70.0 * M_PI * 2) * 5.0 : 0);
     CGFloat oy = 16 + self.hopY;
     CGFloat spriteTop, spriteRight;
     CGFloat breath = (self.mood == MoodSleep ? 1.6 : 0.9) * (1 + sin(self.breathPhase)) / 2;
@@ -569,6 +658,24 @@ static NSView *hudRowCard(CGFloat width) {
 - (void)mouseEntered:(NSEvent *)e { self.mouseInside = YES; }
 - (void)mouseExited:(NSEvent *)e { self.mouseInside = NO; self.lookVec = NSZeroPoint; }
 - (void)mouseMoved:(NSEvent *)e {
+    NSPoint vp = [self convertPoint:e.locationInWindow fromView:nil];
+    if ([self pointOverFish:vp]) {
+        self.rubAccum += fabs(e.deltaX) + fabs(e.deltaY);
+        if (self.rubAccum > 90) {   // 부비부비 인정 — 좋아 죽음
+            self.rubAccum = 0;
+            for (int i = 0; i < 4; i++) {
+                Heart *h = [Heart new];
+                h.x = self.bounds.size.width / 2 - 30 + arc4random_uniform(60);
+                h.y = 16 + BROWS * CELL - 8 + arc4random_uniform(14);
+                h.vy = 1.2 + arc4random_uniform(10) / 10.0;
+                h.life = 1.0;
+                [self.hearts addObject:h];
+            }
+            self.happyUntil = [NSDate dateWithTimeIntervalSinceNow:2.0];
+            self.hopV = 3.5;
+            self.wiggleFrames = 14;
+        }
+    }
     if (self.mood == MoodSleep) return;   // 자는 애는 시선 없음
     NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
     NSPoint center = NSMakePoint(NSMidX(self.bounds), NSMidY(self.bounds));
@@ -746,6 +853,12 @@ static NSString *hudTimeShort(NSString *iso) {
     inputWrap.layer.borderColor = [NSColor colorWithCalibratedWhite:1.0 alpha:0.10].CGColor;
     [card addSubview:inputWrap];
 
+    ResizeGrip *grip = [[ResizeGrip alloc] initWithFrame:
+        NSMakeRect(size.width - 16, 2, 14, 16)];
+    grip.autoresizingMask = NSViewMinXMargin | NSViewMaxYMargin;
+    [card addSubview:grip];
+    self.hudGrip = grip;
+
     NSTextField *input = [[NSTextField alloc] init];
     input.bordered = NO;
     input.bezeled = NO;
@@ -777,6 +890,25 @@ static NSString *hudTimeShort(NSString *iso) {
         editor.insertionPointColor = [NSColor colorWithCalibratedWhite:0.95 alpha:1];
         editor.drawsBackground = NO;
     }
+}
+
+- (void)hudResizeEnded {
+    NSSize s = self.hudWindow.frame.size;
+    NSDictionary *j = @{@"w": @(s.width), @"h": @(s.height)};
+    [[NSJSONSerialization dataWithJSONObject:j options:0 error:nil]
+        writeToFile:[GariStateReader gariPath:@"pet/hud-size.json"] atomically:YES];
+    NSString *typed = self.hudInput.stringValue ?: @"";
+    self.hudWindow.contentView = [self makeHudCard:s];
+    [self wireGrip];
+    [self buildHud];
+    self.hudInput.stringValue = typed;
+    [self.hudWindow makeFirstResponder:self.hudInput];
+}
+
+- (void)wireGrip {
+    self.hudGrip.win = self.hudWindow;
+    __weak typeof(self) weakSelf = self;
+    self.hudGrip.onResizeEnd = ^{ [weakSelf hudResizeEnded]; };
 }
 
 - (void)tabTapped:(NSButton *)btn {
@@ -1175,9 +1307,10 @@ static NSString *hudTimeShort(NSString *iso) {
     }
 
     doc.frame = NSMakeRect(0, 0, W, y + 12);
+    CGFloat dashOldY = self.hudScroll.contentView.bounds.origin.y;
     self.hudScroll.documentView = doc;
-    if (self.lastQ.length)   // 문답 중엔 그 지점이 보이게
-        [doc scrollPoint:NSMakePoint(0, MAX(0, y - self.hudScroll.frame.size.height + 24))];
+    [doc scrollPoint:NSMakePoint(0, MIN(dashOldY,
+        MAX(0, y + 12 - self.hudScroll.frame.size.height)))];   // 토글 펼쳐도 읽던 자리 유지
 }
 
 - (void)buildChat {
@@ -1222,19 +1355,25 @@ static NSString *hudTimeShort(NSString *iso) {
     void (^bubble)(NSString *, BOOL) = ^(NSString *text, BOOL mine) {
         if (!text.length) return;
         CGFloat maxW = contentW * 0.82;
-        NSTextField *l = [NSTextField wrappingLabelWithString:@""];
-        l.attributedStringValue = mdRender(text, 13,
-            mine ? [NSColor colorWithCalibratedWhite:1.0 alpha:0.98] : fg);
+        NSTextView *l = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, maxW - 32, 10)];
+        l.editable = NO;
         l.selectable = YES;                    // 링크 클릭·본문 복사 가능
-        l.allowsEditingTextAttributes = YES;
-        l.frame = NSMakeRect(0, 0, maxW - 28, 10);
-        CGFloat lh = ceil([l.cell cellSizeForBounds:NSMakeRect(0, 0, maxW - 28, 20000)].height);
-        // 풍선은 말한 만큼만: 셀 실측 폭 (여러 줄이면 자동으로 최대폭)
-        CGFloat tw = MIN(maxW - 28, ceil([l.cell cellSizeForBounds:
-            NSMakeRect(0, 0, maxW - 28, 20000)].width) + 2);
+        l.drawsBackground = NO;
+        l.textContainerInset = NSZeroSize;
+        l.textContainer.lineFragmentPadding = 0;
+        l.linkTextAttributes = @{                // 파랑 강제 해제 — 팔레트의 주황으로
+            NSForegroundColorAttributeName: [NSColor colorWithCalibratedRed:1.0 green:0.62 blue:0.30 alpha:1],
+            NSUnderlineStyleAttributeName: @(NSUnderlineStyleSingle),
+            NSCursorAttributeName: NSCursor.pointingHandCursor};
+        [l.textStorage setAttributedString:mdRender(text, 14,
+            mine ? [NSColor colorWithCalibratedWhite:1.0 alpha:0.98] : fg)];
+        [l.layoutManager ensureLayoutForTextContainer:l.textContainer];
+        NSRect used = [l.layoutManager usedRectForTextContainer:l.textContainer];
+        CGFloat lh = ceil(used.size.height);
+        CGFloat tw = MIN(maxW - 32, ceil(used.size.width) + 2);   // 풍선은 말한 만큼만
         l.frame = NSMakeRect(0, 0, tw, lh + 2);
-        CGFloat bw = tw + 28;
-        CGFloat bh = l.frame.size.height + 20;
+        CGFloat bw = tw + 32;
+        CGFloat bh = l.frame.size.height + 24;
         NSView *b = [[NSView alloc] initWithFrame:
             NSMakeRect(mine ? pad + contentW - bw : pad, y, bw, bh)];
         b.wantsLayer = YES;
@@ -1242,7 +1381,7 @@ static NSString *hudTimeShort(NSString *iso) {
         b.layer.backgroundColor = mine
             ? [accent colorWithAlphaComponent:0.88].CGColor
             : [NSColor colorWithCalibratedWhite:1.0 alpha:0.08].CGColor;
-        l.frame = NSMakeRect(14, 10, tw, l.frame.size.height);
+        l.frame = NSMakeRect(16, 12, tw, l.frame.size.height);
         [b addSubview:l];
         [doc addSubview:b];
         y += bh + 7;
@@ -1264,7 +1403,7 @@ static NSString *hudTimeShort(NSString *iso) {
                 [NSColor colorWithCalibratedWhite:0.40 alpha:1], 1, 60);
             tm.frame = NSMakeRect(pad + 4, y - 3, 60, tm.frame.size.height);
             [doc addSubview:tm];
-            y += tm.frame.size.height + 4;
+            y += tm.frame.size.height + 10;
         }
     }
     // 새 답변 도착 시 페이드인 (스레드가 늘었을 때만)
@@ -1368,6 +1507,8 @@ static NSString *hudTimeShort(NSString *iso) {
 }
 
 - (void)openHud {
+    self.hopV = 3.5;   // 불러주셨다 — 반김
+
     // 읽음 처리 (현황판이 보고 내용을 담으므로 배지 해제 근거가 된다)
     NSDateFormatter *df = [NSDateFormatter new]; df.dateFormat = @"yyyy-MM-dd";
     [NSFileManager.defaultManager createFileAtPath:
@@ -1393,15 +1534,7 @@ static NSString *hudTimeShort(NSString *iso) {
         self.hudWindow.maxSize = NSMakeSize(1000, NSScreen.mainScreen.visibleFrame.size.height);
         [NSNotificationCenter.defaultCenter addObserverForName:NSWindowDidEndLiveResizeNotification
             object:self.hudWindow queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
-            NSSize s = self.hudWindow.frame.size;
-            NSDictionary *j = @{@"w": @(s.width), @"h": @(s.height)};
-            [[NSJSONSerialization dataWithJSONObject:j options:0 error:nil]
-                writeToFile:[GariStateReader gariPath:@"pet/hud-size.json"] atomically:YES];
-            NSString *typed = self.hudInput.stringValue ?: @"";
-            self.hudWindow.contentView = [self makeHudCard:s];   // 새 크기로 레이아웃 재구성
-            [self buildHud];
-            self.hudInput.stringValue = typed;
-            [self.hudWindow makeFirstResponder:self.hudInput];
+            [self hudResizeEnded];
         }];
         self.hudWindow.opaque = NO;
         self.hudWindow.backgroundColor = NSColor.clearColor;
@@ -1411,6 +1544,7 @@ static NSString *hudTimeShort(NSString *iso) {
                                           | NSWindowCollectionBehaviorFullScreenAuxiliary;
         self.hudWindow.hasShadow = YES;
         self.hudWindow.contentView = [self makeHudCard:NSMakeSize(W, H)];
+        [self wireGrip];
         // 팝오버 표준: 바깥 클릭 = 닫기
         [NSEvent addGlobalMonitorForEventsMatchingMask:
             NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown
@@ -1671,8 +1805,11 @@ static NSString *hudTimeShort(NSString *iso) {
     NSSize size = NSMakeSize(150, 112);
     NSImage *sheet = nil;
     NSData *cd = [NSData dataWithContentsOfFile:[GariStateReader gariPath:@"pet/pet-config.json"]];
+    NSDictionary *petCfg = @{};
+    if (cd) petCfg = [NSJSONSerialization JSONObjectWithData:cd options:0 error:nil] ?: @{};
+    initPalette(petCfg);
     if (cd) {
-        NSDictionary *cj = [NSJSONSerialization JSONObjectWithData:cd options:0 error:nil];
+        NSDictionary *cj = petCfg;
         NSString *sp = cj[@"spritesheet"];
         if ([sp isKindOfClass:NSString.class] && sp.length > 0) {
             sheet = [[NSImage alloc] initWithContentsOfFile:sp.stringByExpandingTildeInPath];
@@ -1859,10 +1996,12 @@ int main(int argc, const char *argv[]) {
     @autoreleasepool {
         if (argc >= 3 && strcmp(argv[1], "--icon") == 0) {
             [NSApplication sharedApplication];
+            initPalette(@{});
             renderIcon([NSString stringWithUTF8String:argv[2]]);
             return 0;
         }
         if (argc >= 3 && strcmp(argv[1], "--snapshot") == 0) {
+            initPalette(@{});
             [NSApplication sharedApplication];
             renderSnapshots([NSString stringWithUTF8String:argv[2]]);
             return 0;

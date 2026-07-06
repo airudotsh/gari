@@ -2,6 +2,11 @@
 
 > **An agent for vibe coders — remembers, briefs, and meddles.**
 
+<p align="center">
+  <img src="docs/img/gari-pet.png" width="120" alt="가리 펫">
+  <img src="docs/img/gari-chat.png" width="300" alt="가리 대화창">
+</p>
+
 여러 AI CLI(Claude Code·Codex·gjc)와 병렬로 일하다 보면, 결정은 대화 속에서 내려지고 대화와 함께 증발한다.
 가리는 그 **사이**에 앉아 모든 대화를 듣고, 기억할 것만 남기고, 아침마다 브리핑하고, 놓친 게 보이면 참견하는 개인 에이전트다.
 
