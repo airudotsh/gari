@@ -283,6 +283,7 @@ static NSView *hudRowCard(CGFloat width) {
 @property (strong) NSDate *happyUntil;      // 쓰다듬 반응 창 (표정)
 @property (strong) NSString *bubbleOverride;
 @property (strong) NSDate *bubbleUntil;     // 말풍선 유지 시한 (표정과 분리)
+@property (strong) NSString *lastBubbleLine; // 같은 대사 연속 방지
 @property (strong) NSMutableArray<Heart *> *hearts;
 @property (strong) NSMutableArray<AmbientBubble *> *ambient;
 @property int bubbleCountdown;
@@ -719,10 +720,34 @@ static NSView *hudRowCard(CGFloat width) {
         h.life = 1.0;
         [self.hearts addObject:h];
     }
-    NSArray *lines = self.badge > 0
-        ? @[@"형님! 현황판 대령입니다", @"충성! 결재 대기 중입니다", @"헤헤, 형님 최고"]
-        : @[@"충성!", @"헤헤", @"형님 오셨습니까!", @"오늘도 듣고 있습니다", @"카드 쌓는 중입니다"];
-    self.bubbleOverride = lines[arc4random_uniform((uint32_t)lines.count)];
+    // 대사 풀: 기본 + 상황(결재·작업·시간대)별 가산 — 같은 말 연속 금지
+    NSMutableArray *lines = [@[
+        @"충성!", @"헤헤", @"형님 오셨습니까!", @"부르셨습니까!",
+        @"오늘도 듣고 있습니다", @"카드 쌓는 중입니다", @"기억은 제가 다 합니다",
+        @"뭐든 물어보십시오", @"참견할 준비 됐습니다", @"물 좋습니다, 형님",
+        @"지느러미 컨디션 최상입니다", @"가리발디의 명예를 걸고!",
+        @"형님 최고", @"꼬리 흔드는 중입니다", @"잊으신 거 있으면 제가 압니다"] mutableCopy];
+    if (self.badge > 0)
+        [lines addObjectsFromArray:@[
+            @"형님! 현황판 대령입니다", @"충성! 결재 대기 중입니다",
+            @"결재함이 형님을 기다립니다", @"도장 찍을 게 몇 개 있습니다"]];
+    if (self.mood == MoodWork)
+        [lines addObjectsFromArray:@[
+            @"작업 캐는 중입니다 — 불러주셨습니까!", @"바쁘지만 형님이 먼저죠",
+            @"기포 올라오는 거 보이시죠? 일하는 소리입니다"]];
+    NSInteger hour = [NSCalendar.currentCalendar component:NSCalendarUnitHour fromDate:NSDate.date];
+    if (hour >= 23 || hour < 5)
+        [lines addObjectsFromArray:@[
+            @"형님, 이 시간까지… 대단하십니다", @"저는 야행성이라 괜찮습니다",
+            @"새벽 물살이 조용하니 좋네요"]];
+    else if (hour >= 5 && hour < 10)
+        [lines addObjectsFromArray:@[
+            @"좋은 아침입니다, 형님!", @"아침 보고 준비돼 있습니다", @"오늘의 한 칸부터 보시죠"]];
+    NSString *pick = lines[arc4random_uniform((uint32_t)lines.count)];
+    if ([pick isEqualToString:self.lastBubbleLine] && lines.count > 1)
+        pick = lines[arc4random_uniform((uint32_t)lines.count)];
+    self.lastBubbleLine = pick;
+    self.bubbleOverride = pick;
     self.bubbleUntil = [NSDate dateWithTimeIntervalSinceNow:2.5];
     [self toggleHud];   // 클릭 = 쓰다듬기 + 현황판 (가리의 모든 것이 가리 안에서 보인다)
     self.needsDisplay = YES;
@@ -1376,6 +1401,9 @@ static NSString *hudTimeShort(NSString *iso) {
         (void)[l.layoutManager glyphRangeForTextContainer:l.textContainer];
         used = [l.layoutManager usedRectForTextContainer:l.textContainer];
         CGFloat lh = ceil(used.size.height);
+        if (getenv("GARI_DEBUG_MEASURE"))
+            fprintf(stderr, "[measure] chars=%lu tw=%.0f lh=%.0f\n",
+                    (unsigned long)text.length, tw, lh);
         l.frame = NSMakeRect(0, 0, tw, lh + 2);
         CGFloat bw = tw + 32;
         CGFloat bh = l.frame.size.height + 24;
@@ -2041,6 +2069,7 @@ int main(int argc, const char *argv[]) {
     // 단일 인스턴스 잠금 — 어느 문(CLI·Gari.app·launchd)으로 열어도 펫은 한 마리
     // (앱 실행 시 시스템이 숨은 인자를 붙이므로 인자 유무가 아니라 "유틸리티 모드 여부"로 판정)
     BOOL utility = (argc >= 2 && (strcmp(argv[1], "--icon") == 0 ||
+                                  strcmp(argv[1], "--measure") == 0 ||
                                   strcmp(argv[1], "--snapshot") == 0));
     if (!utility) {
         NSString *lockPath = [GariStateReader gariPath:@"pet/instance.lock"];
@@ -2055,6 +2084,30 @@ int main(int argc, const char *argv[]) {
             [NSApplication sharedApplication];
             initPalette(@{});
             renderIcon([NSString stringWithUTF8String:argv[2]]);
+            return 0;
+        }
+        if (argc >= 3 && strcmp(argv[1], "--measure") == 0) {
+            [NSApplication sharedApplication];
+            initPalette(@{});
+            NSString *body = [NSString stringWithContentsOfFile:
+                [NSString stringWithUTF8String:argv[2]]
+                encoding:NSUTF8StringEncoding error:nil] ?: @"(파일 없음)";
+            PetView *v = [[PetView alloc] initWithFrame:NSMakeRect(0, 0, 150, 112)];
+            NSView *card = [v makeHudCard:NSMakeSize(400, 500)];
+            (void)card;
+            v.hudData = @{@"chat": @{@"session": @"m", @"title": @"측정",
+                                     @"sessions": @[],
+                                     @"thread": @[@{@"q": @"측정용 질문", @"a": body, @"ts": @"00:00"}]}};
+            v.hudMode = 1;
+            [v buildHud];
+            NSView *doc = v.hudScroll.documentView;
+            fprintf(stderr, "[doc] 높이=%.0f (입력 %lu자)\n",
+                    doc.frame.size.height, (unsigned long)body.length);
+            for (NSView *sub in doc.subviews)
+                if (sub.frame.size.height > 100)
+                    fprintf(stderr, "[bubble] h=%.0f 내부뷰h=%.0f\n",
+                            sub.frame.size.height,
+                            sub.subviews.firstObject.frame.size.height);
             return 0;
         }
         if (argc >= 3 && strcmp(argv[1], "--snapshot") == 0) {

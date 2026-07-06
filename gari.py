@@ -113,6 +113,11 @@ def append_cards(cards):
             f.write(json.dumps(c, ensure_ascii=False) + "\n")
 
 
+def read_cards_all():
+    """카드 원장 전체 (자정 넘김에 안전 — '전체' 의도는 반드시 이걸 쓸 것)."""
+    return read_cards(3650)
+
+
 def read_cards(days_back):
     """최근 N일 카드 전부 (오래된 것 → 최신 순)."""
     cards = []
@@ -159,7 +164,7 @@ def cmd_snooze(args):
         print("사용법: gari snooze <ID> [일수]")
         return 1
     key, days = args[0], int(args[1]) if len(args) > 1 else 7
-    cards = read_cards(0)
+    cards = read_cards_all()
     target = next((c for c in open_pendings(cards, include_snoozed=True)
                    if c.get("id") == key), None)
     if not target:
@@ -826,7 +831,7 @@ def cmd_report(args):
     # 큐 정리 제안 — 병목 인간이 큐의 사서가 되지 않게 (제안만, 자동 해소 없음)
     try:
         tdata = run_triage(cfg)
-        tlines = triage_summary_lines(tdata, {c["id"]: c for c in open_pendings(read_cards(0))})
+        tlines = triage_summary_lines(tdata, {c["id"]: c for c in open_pendings(read_cards_all())})
         if tlines:
             report += "\n## 큐 정리 제안 (가리가 검토함)\n\n" + "\n".join("- " + l for l in tlines) + "\n"
     except (RuntimeError, json.JSONDecodeError) as e:
@@ -1119,7 +1124,7 @@ def load_chat_history(cfg, sid):
 
 def append_chat(sid, question, answer):
     with open(_chat_path(sid), "a", encoding="utf-8") as f:
-        f.write(json.dumps({"ts": now_iso(), "q": question, "a": answer[:800]},
+        f.write(json.dumps({"ts": now_iso(), "q": question, "a": answer},
                            ensure_ascii=False) + "\n")
 
 
@@ -1460,6 +1465,24 @@ def cmd_ask(args):
         set_ask_status("깊이 생각하는 중… (사고 원전 + 웹 검색 가능)")
         _chat_set_meta(sid, "deep", True)   # 이 세션은 이제 논의 — 후속 질문도 깊게 이어진다
         depth = (TEMPLATES / "thinking-depth.md").read_text(encoding="utf-8")
+        # 관련 프로젝트 위키 동봉: 질문에 이름이 걸리는 것 + 최근 활동 상위 (카드보다 종합된 재료)
+        wiki_txts, seen_wk = [], set()
+        alias = {"review-board": "review-board", "sound-library": "sound-library", "젤리": "jellyfish", "뇌클론": "brain-clone",
+                 "브레인클론": "brain-clone", "게임잼": "solo-game"}
+        ql = question.lower()
+        for wf in sorted(WIKI_DIR.glob("*.md")) if WIKI_DIR.exists() else []:
+            stem = wf.stem.lower()
+            hit = stem[:6] in ql or any(k in question and v in stem for k, v in alias.items())
+            if hit and wf.stem not in seen_wk:
+                wiki_txts.append(wf.read_text(encoding="utf-8")[:3000])
+                seen_wk.add(wf.stem)
+        if not wiki_txts:
+            for b in _hud_compass(read_cards(3))[:2]:   # 못 찾으면 최근 활동 상위 2개
+                wf = WIKI_DIR / (b["project"] + ".md")
+                if wf.exists():
+                    wiki_txts.append(wf.read_text(encoding="utf-8")[:2500])
+        wiki_block = ("\n\n=== 프로젝트 위키 (현재 상태 종합 — 카드보다 이걸 우선 신뢰) ===\n"
+                      + "\n---\n".join(wiki_txts)) if wiki_txts else ""
         deep_prompt = ("%s 너는 \"가리\" — 형님(아이루)의 기획 파트너다. 시니어 프로덕트 리더의 깊이로 논의를 리드하라. "
                        + facts.replace("%", "%%") + "\n"
                        "이건 단답이 아니라 **논의**다. 구조: ① 형님 말의 요지 재구성 (한 줄) ② 지금까지의 사실 (카드 인용) "
@@ -1474,6 +1497,7 @@ def cmd_ask(args):
                        "%s\n\n=== 형님의 최근 기록 (카드) ===\n%s\n\n=== 이전 문답 ===\n%s\n\n=== 형님의 질문 ===\n%s") % (
             DISTILL_MARKER, depth, "\n".join(lines[-60:]) or "(없음)",
             hist_txt or "(첫 대화)", question)
+        deep_prompt += wiki_block
         if prefs:
             deep_prompt += "\n\n" + prefs
         answer, rc = run_claude_stream(deep_prompt, cfg["ask_fallback_model"], cfg, "ask-deep",
@@ -1850,7 +1874,7 @@ TRIAGE_PATH = STORE / "triage.json"
 
 def run_triage(cfg):
     """미결 큐 자동 검토 — 해소는 절대 직접 하지 않고 근거 딸린 제안만 만든다 (오발 사고 예방)."""
-    cards = read_cards(0)
+    cards = read_cards_all()
     pends = open_pendings(cards)
     if not pends:
         save_json(TRIAGE_PATH, {"ts": now_iso(), "now": None, "items": []})
@@ -1950,7 +1974,7 @@ def cmd_triage(args):
     if not data:
         print("미결 0건 — 정리할 것이 없습니다.")
         return 0
-    pends = {c["id"]: c for c in open_pendings(read_cards(0))}
+    pends = {c["id"]: c for c in open_pendings(read_cards_all())}
     lines = triage_summary_lines(data, pends)
     print("미결 %d건 검토:" % len(pends))
     for line in lines:
@@ -1992,7 +2016,7 @@ WIKI_DIR = STORE / "wiki"
 def regenerate_wikis(cfg, force=False):
     """카드(사건 일지) → 프로젝트별 현재 상태 위키. 새 카드가 생긴 프로젝트만 다시 쓴다 (증분)."""
     WIKI_DIR.mkdir(exist_ok=True)
-    cards = read_cards(0)
+    cards = read_cards_all()
     by_proj = {}
     for c in cards:
         if c.get("type") == "snooze":
@@ -2014,7 +2038,10 @@ def regenerate_wikis(cfg, force=False):
         prompt = ("%s 너는 가리 — 프로젝트 위키 사서다. 아래 사건 일지(카드)로 '%s' 프로젝트의 "
                   "**현재 상태 문서**를 작성하라. 규칙: 모순되면 최신·정정(correction)이 이긴다. "
                   "일지에 없는 것 지어내기 금지. 이 문서는 답변 뇌가 읽는다 — 장식 없이 사실만.\n"
-                  "형식 (마크다운):\n# %s\n**정체**: 한 줄\n**현재 상태**: 2~3줄\n"
+                  "형식 (마크다운):\n# %s\n**정체**: 한 줄\n"
+                  "**존재 이유 (누가 언제 왜 쓰나)**: 한두 줄 — 일지에 근거가 없으면 정확히 \"미정의 — 카드에 사용자·문제 정의 없음\"이라고 써라\n"
+                  "**성공 기준**: 한 줄 — 근거 없으면 \"미정의\"\n"
+                  "**현재 상태**: 2~3줄\n"
                   "**유효한 결정** (최신 기준): 목록\n**열린 미결**: 목록\n**최근 흐름**: 3줄 이내\n\n"
                   "=== 사건 일지 (%d장) ===\n%s") % (
             DISTILL_MARKER, name, name, len(cs), "\n".join(lines))
