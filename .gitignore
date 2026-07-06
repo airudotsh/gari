@@ -1,0 +1,16 @@
+# 개인 데이터 — 절대 커밋 금지 (카드 원장·대화·보고·비용·위키)
+store/
+works/
+reports/
+config.json
+
+# 빌드 산출물·기기 상태
+pet/gari-pet
+pet/position.json
+pet/hud-size.json
+pet/instance.lock
+pet/pet-config.json
+pet/app/
+*.log
+__pycache__/
+.DS_Store
