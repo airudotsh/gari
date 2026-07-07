@@ -1291,16 +1291,17 @@ def set_ask_status(text):
 CLAUDE_ENV = dict(os.environ, CLAUDE_CODE_MAX_OUTPUT_TOKENS="16000")  # 긴 논의 답변 잘림 방지
 
 
-def run_claude(prompt, model, cfg, kind, tools=None, timeout=None, cwd=None):
+def run_claude(prompt, model, cfg, kind, tools=None, timeout=None, cwd=None, max_out=None):
     """claude -p 호출 단일 관문 — JSON 출력으로 비용·시간을 계측해 usage.jsonl에 남긴다 (fail-loud)."""
     prompt = personalize(prompt, cfg)
     cmd = [cfg["claude_bin"], "-p", prompt, "--model", model, "--output-format", "json"]
     if tools:
         cmd += ["--allowedTools", tools]
     t0 = time.time()
+    env = dict(CLAUDE_ENV, CLAUDE_CODE_MAX_OUTPUT_TOKENS=str(max_out)) if max_out else CLAUDE_ENV
     r = subprocess.run(cmd, capture_output=True, text=True,
                        timeout=timeout or cfg["distill_timeout_sec"],
-                       cwd=cwd or str(GARI_HOME), env=CLAUDE_ENV)
+                       cwd=cwd or str(GARI_HOME), env=env)
     dur = round(time.time() - t0, 1)
     text, cost, tokens = "", None, None
     if r.returncode == 0 and r.stdout.strip():
@@ -1502,9 +1503,23 @@ def cmd_ask(args):
     attach_paths = [a for a in attach_paths if Path(a).expanduser().exists()]
 
     cards = read_cards(cfg["briefing_days"])
+    # 관련 카드 소환: 질문 키워드로 전체 원장 검색 → 최신 창에 합류 (최신 홍수에 기억이 밀려나지 않게)
+    tokens = [t for t in re.findall(r"[가-힣a-zA-Z0-9]{2,}", question)][:8]
+    pool = read_cards_all()
+    relevant = [c for c in pool
+                if any(t in c.get("text", "") or t in str(c.get("project", "")) for t in tokens)][-40:]
+    seen_ids = set()
+    merged = []
+    for c in relevant + cards[-90:]:
+        key = c.get("id") or c["text"][:30]
+        if key in seen_ids:
+            continue
+        seen_ids.add(key)
+        merged.append(c)
+    merged.sort(key=lambda c: c["ts"])
     lines = ["(%s) %s [%s/%s] %s: %s" % (c.get("id", "-"), c["ts"][:16], c["tool"],
                                          _proj_short(c), c["type"], c["text"])
-             for c in cards[-120:]]
+             for c in merged[-130:]]
     history = load_chat_history(cfg, sid)
     hist_txt = "\n".join("나: %s\n가리: %s" % (t["q"], t["a"]) for t in history)
     persona = (TEMPLATES / "ask-prompt.txt").read_text(encoding="utf-8")
@@ -1516,10 +1531,12 @@ def cmd_ask(args):
              "- 뇌 배치: 접수·기억답변·증류=haiku / 판단·멘토·일반지식·아침산출=sonnet.\n"
              "- 저장: ~/gari/store (카드 원장·대화·보고). 원문 대화는 각 CLI 폴더에 그대로, 가리는 읽기만.\n"
              "- 수집 범위: 전량 (2026-07-06 형님 지시). 그 이전 회사 기록은 소급분만.\n"
+             "- 수집된 프로젝트 (전체 명단 — 이 밖을 지어내지 마라): %s\n"
              "- 화면 지도 — 현황판 탭: ①오늘 카드(한 칸·멘토 훈련·참견·질문 — 아침 산출) ②프로젝트 방향판(위키 기반, 프로젝트별 정체+다음 결정) "
              "③처리함(형님 액션 인박스: ▶지금 이거 1건 / 끝난 듯·중복=가리 정리 제안으로 접힘 / ◇결재 / 채점 맞음·오발 / 실무 대기=파견 가능이라 접힘 / 그 외 미결) "
              "④오늘 기록 1줄. 대화 탭: 세션 목록·말풍선 스레드. 행 클릭=맥락 질문, 완료/나중에 버튼.") % (
-        cfg["sweep_interval_min"], cfg["report_hour"])
+        cfg["sweep_interval_min"], cfg["report_hour"],
+        ", ".join(sorted(wf.stem for wf in WIKI_DIR.glob("*.md"))) if WIKI_DIR.exists() else "(없음)")
     persona += facts
     if cfg.get("collect_all"):
         scope_line = ("모든 CLI 대화를 수집한다 (회사 포함 전량 — 2026-07-06 형님 지시). "
@@ -1652,7 +1669,7 @@ def cmd_ask(args):
         set_ask_status("문서 조사 중…")
         deep = ("%s %s\n\n카드에는 기록이 없었다. **~/gari/store/wiki/ 의 프로젝트 위키를 먼저 보고**, "
                 "그다음 ~/gari, ~/roadmap, ~/brain-clone 의 문서를 "
-                "Read/Glob/Grep으로 직접 조사해서 답하라. "
+                "Read/Glob/Grep으로 **지금 직접 조사해서** 결과로 답하라 — \"찾아볼까요?\" 같은 되묻기 절대 금지 (조사는 네 권한이다). "
                 "화면·기능·사용법 질문이면 소스코드보다 ~/gari/docs/INVENTORY.md와 README.md를 우선 근거로 하라. "
                 "답은 제품 언어로만 — 라인번호·git 상태·카드 ID 노출 금지 (형님은 기획자다). 그래도 없으면 어디를 찾아봤는지 밝혀라.\n"
                 "=== 형님의 질문 ===\n%s") % (DISTILL_MARKER, persona, question)
@@ -2036,11 +2053,12 @@ def run_triage(cfg):
     if not pends:
         save_json(TRIAGE_PATH, {"ts": now_iso(), "now": None, "items": []})
         return None
-    recent = ["%s [%s/%s] %s: %s" % (c["ts"][:16], c["tool"], _proj_short(c), c["type"], c["text"])
-              for c in read_cards(3)[-150:] if c["type"] != "pending"]
-    decisions = ["(%s) %s [%s] %s" % (c.get("id", "-"), c["ts"][5:16], _proj_short(c), c["text"])
-                 for c in read_cards(7) if c["type"] in ("decision", "correction")][-120:]
-    plist_txt = "\n".join("(%s) [%s] %s" % (c.get("id", "-"), _proj_short(c), c["text"]) for c in pends)
+    recent = ["%s [%s/%s] %s: %s" % (c["ts"][:16], c["tool"], _proj_short(c), c["type"], c["text"][:90])
+              for c in read_cards(3)[-80:] if c["type"] != "pending"]
+    decisions = ["(%s) %s [%s] %s" % (c.get("id", "-"), c["ts"][5:16], _proj_short(c), c["text"][:90])
+                 for c in read_cards(7) if c["type"] in ("decision", "correction")][-60:]
+    pends_in = pends[-40:]   # 입력 상한 — 트리아지 지연 방지 (나머지는 다음 날 순번)
+    plist_txt = "\n".join("(%s) [%s] %s" % (c.get("id", "-"), _proj_short(c), c["text"][:100]) for c in pends_in)
     prompt = ("%s 너는 가리 — 사용자의 미결 큐를 정리하는 사서다. 미결 목록과 최근 활동 기록을 대조해 JSON만 출력하라 (설명 금지):\n"
               '{"now": {"id": "...", "why": "왜 이것부터인지 한 문장"},\n'
               ' "done_like": [{"id": "...", "evidence": "완료로 보이는 근거 — 반드시 기록에서 인용"}],\n'
@@ -2050,10 +2068,12 @@ def run_triage(cfg):
               ' "kinds": {"<모든 미결 id>": "direction 또는 work"}}\n'
               "kinds 기준: direction = 방향·우선순위·취향·권한·정책 — 사용자만 정할 수 있는 것. "
               "work = 구현·검증·조사·수정 — AI 에이전트가 파견받아 처리할 수 있는 것.\n"
-              "규칙: 근거 없는 done_like 금지(확신 없으면 비워라). now는 정확히 1건 — 임팩트와 차단 해제 기준. "
+              "규칙: **서문·설명·사고과정 절대 금지 — JSON 한 덩어리만 출력** (전체 800자 이내 목표). "
+              "why/evidence/ask는 각각 한 문장 상한. kinds는 입력된 미결 id에 대해서만. "
+              "근거 없는 done_like 금지(확신 없으면 비워라). now는 정확히 1건 — 임팩트와 차단 해제 기준. "
               "dupes는 같은 일을 가리키는 항목만. conflicts는 결정 카드끼리 **서로 모순**되는 쌍만 — "
               "정정(correction) 카드가 이미 덮은 모순, 단순한 계획 변경·진화는 제외. 모르면 빈 배열.\n\n"
-              "=== 미결 (%d건) ===\n%s\n\n=== 최근 결정·정정 (모순 검사용, 7일) ===\n%s\n\n=== 최근 3일 활동 ===\n%s") % (
+              "=== 미결 (%d건 중 최근 40) ===\n%s\n\n=== 최근 결정·정정 (모순 검사용, 7일) ===\n%s\n\n=== 최근 3일 활동 ===\n%s") % (
         DISTILL_MARKER, len(pends), plist_txt, "\n".join(decisions) or "(없음)",
         "\n".join(recent) or "(없음)")
     text, rc = run_claude(prompt, cfg["ask_fallback_model"], cfg, "triage",
@@ -2065,7 +2085,7 @@ def run_triage(cfg):
         raise RuntimeError("triage 출력 파싱 실패: %s" % text[:120])
     data = json.loads(m.group(0))
     data["ts"] = now_iso()
-    valid = {c["id"] for c in pends}
+    valid = {c.get("id") for c in pends} - {None}
     if data.get("now") and data["now"].get("id") not in valid:
         data["now"] = None
     data["done_like"] = [d for d in data.get("done_like", []) if d.get("id") in valid and d.get("evidence")]
