@@ -48,6 +48,7 @@ def load_config():
     with open(CONFIG_PATH, encoding="utf-8") as f:
         cfg = json.load(f)
     # claude 경로 자동 해결 — 설정 경로가 죽었으면 PATH에서 찾는다 (기기 이식성)
+    cfg.setdefault("deep_model", cfg.get("ask_fallback_model", "sonnet"))
     if not Path(cfg.get("claude_bin", "")).exists():
         found = shutil.which("claude")
         if found:
@@ -1027,7 +1028,7 @@ def compose_reflection(cards, cfg):
         "\n".join("- " + t for t in misfires) or "- (없음)",
         "\n".join("- " + t for t in misses) or "- (없음)",
         "\n".join("- " + t for t in repeats) or "- (없음)")
-    text, rc = run_claude(prompt, cfg["ask_fallback_model"], cfg, "weekly-reflect",
+    text, rc = run_claude(prompt, cfg["deep_model"], cfg, "weekly-reflect",
                           timeout=420, max_out=2500)
     if rc != 0 or not (text or "").strip():
         return "- 반성 산출 실패 (모델 호출 오류) — 다음 주간 보고에서 재시도"
@@ -1107,6 +1108,56 @@ def pulse_line(name):
     if pj["dirty"]:
         parts.append("미커밋 변경 %d" % pj["dirty"])
     return "실측(git): " + " · ".join(parts)
+
+
+def cmd_merge(args):
+    """gari merge [이름] — 격리 파견 산출 합류. 무인자=대기 목록, 이름 지정=원본에 머지 후 사본 철거.
+    머지는 이 명령으로만 (자동 머지 금지 원칙의 수동 손잡이)."""
+    works = sorted((GARI_HOME / "works").glob("wt-*"))
+    works = [w for w in works if w.is_dir() and (w / ".git").exists()]
+    if not args:
+        if not works:
+            print("합류 대기 중인 격리 산출이 없습니다.")
+            return 0
+        print("격리 산출 대기 목록 — 합류: gari merge <이름>")
+        for w in works:
+            r = subprocess.run(["git", "-C", str(w), "diff", "HEAD~1", "--stat"],
+                               capture_output=True, text=True)
+            stat = (r.stdout.strip().splitlines() or ["(diff 없음)"])[-1]
+            common = subprocess.run(["git", "-C", str(w), "rev-parse", "--git-common-dir"],
+                                    capture_output=True, text=True).stdout.strip()
+            orig = str(Path(common).parent) if common else "?"
+            print(" · %-28s → %s\n   %s" % (w.name, orig, stat.strip()))
+        return 0
+    name = args[0] if args[0].startswith("wt-") else "wt-" + args[0]
+    wt = GARI_HOME / "works" / name
+    if not wt.exists():
+        print("없는 산출: %s (목록: gari merge)" % name)
+        return 1
+    common = subprocess.run(["git", "-C", str(wt), "rev-parse", "--git-common-dir"],
+                            capture_output=True, text=True).stdout.strip()
+    orig = Path(common).parent
+    branch = "gari/" + name
+    dirty = subprocess.run(["git", "-C", str(orig), "status", "--porcelain"],
+                           capture_output=True, text=True).stdout.strip()
+    if dirty:
+        print("원본(%s)에 미커밋 변경이 있어 합류를 중단합니다 — 먼저 커밋하거나 치워주세요 (충돌 방지)." % orig)
+        return 1
+    r = subprocess.run(["git", "-C", str(orig), "merge", "--no-ff", branch,
+                        "-m", "가리 파견 산출 합류 — " + name],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        subprocess.run(["git", "-C", str(orig), "merge", "--abort"], capture_output=True)
+        print("합류 충돌 — 머지를 되돌렸습니다. 수동 해결이 필요합니다:\n%s" % (r.stdout or r.stderr)[:300])
+        return 1
+    subprocess.run(["git", "-C", str(orig), "worktree", "remove", "--force", str(wt)], capture_output=True)
+    subprocess.run(["git", "-C", str(orig), "branch", "-d", branch], capture_output=True)
+    print("합류 완료: %s → %s (사본 철거·브랜치 정리까지). 푸시는 형님 몫입니다." % (branch, orig))
+    append_cards([{"id": hashlib.md5(("merge" + name).encode()).hexdigest()[:8],
+                   "ts": now_iso(), "tool": "gari-do", "project": orig.name,
+                   "session": name, "burst": name, "type": "win",
+                   "text": "(합류) 격리 파견 산출 %s를 %s에 머지" % (name, orig.name)}])
+    return 0
 
 
 def cmd_pulse(args):
@@ -1828,7 +1879,8 @@ def cmd_ask(args):
                   "입력창", "대화창", "세션", "소급", "증류", "수집")
     self_q = any(w in question for w in SELF_WORDS)
     if self_q:
-        # 자기 구조 질문 고속차선 — 심층 금지, 사실표 즉답 (몇 초)
+        # 자기 구조 질문 고속차선 — 심층 금지, 사실표 즉답 (몇 초). 답 재료는 사실표라 카드는 최소만.
+        lines = lines[-15:]
         persona += ("\n\n[고속차선] 이 질문은 가리 자기 구조·규칙에 대한 것이다. "
                     "위 사실표와 화면 지도로 지금 즉답하라. [깊은사고]·[일반질문] 마커 출력 금지.")
     elif deep_session:
@@ -1920,7 +1972,7 @@ def cmd_ask(args):
         if prefs:
             deep_prompt += "\n\n" + prefs
         metric("ask_deep", question[:60])
-        answer, rc = run_claude_stream(deep_prompt, cfg["ask_fallback_model"], cfg, "ask-deep",
+        answer, rc = run_claude_stream(deep_prompt, cfg["deep_model"], cfg, "ask-deep",
                                        "Read,Glob,Grep,WebSearch,WebFetch",
                                        timeout=cfg["do_timeout_sec"])
         if not answer:
@@ -2148,8 +2200,8 @@ def cmd_do(args):
             subprocess.run(["git", "-C", workdir, "add", "-A"], capture_output=True)
             subprocess.run(["git", "-C", workdir, "commit", "-m", "가리 파견 산출 — " + task[:60]],
                            capture_output=True)
-            merge_note = ("산출은 격리 브랜치 %s에 있습니다 (원본 무접촉). "
-                          "검토 후 합류를 지시해 주세요." % wt_branch)
+            merge_note = ("산출은 격리 사본에 있습니다 (원본 무접촉). "
+                          "검토 후 `gari merge %s` 한 번이면 합류됩니다." % Path(workdir).name)
         else:
             subprocess.run(["git", "-C", str(Path(orig_workdir).expanduser().resolve()),
                             "worktree", "remove", "--force", workdir], capture_output=True)
@@ -2438,7 +2490,7 @@ def run_triage(cfg):
               "=== 미결 (%d건 중 최근 40) ===\n%s\n\n=== 최근 결정·정정 (모순 검사용, 7일) ===\n%s\n\n=== 최근 3일 활동 ===\n%s") % (
         DISTILL_MARKER, len(pends), plist_txt, "\n".join(decisions) or "(없음)",
         "\n".join(recent) or "(없음)")
-    text, rc = run_claude(prompt, cfg["ask_fallback_model"], cfg, "triage",
+    text, rc = run_claude(prompt, cfg["deep_model"], cfg, "triage",
                           timeout=cfg["do_timeout_sec"])
     if rc != 0 or not text:
         raise RuntimeError("triage 뇌 호출 실패")
@@ -2566,7 +2618,7 @@ def compose_stakes(cfg):
         (now_c or {}).get("text", "(없음)")[:100], (tri.get("now") or {}).get("why", "")[:80],
         question[:120] or "(없음)", (approvals[0][:80] if approvals else "(없음)"),
         mentor_line[:80] or "(없음)", total)
-    text, rc = run_claude(prompt, cfg["ask_fallback_model"], cfg, "stakes",
+    text, rc = run_claude(prompt, cfg["deep_model"], cfg, "stakes",
                           timeout=cfg["do_timeout_sec"], max_out=8000)
     try:
         m = re.search(r"\{.*\}", text, re.S)
@@ -2657,7 +2709,7 @@ def compose_mentor_review(cfg):
     prompt = ("%s %s%s\n\n=== 방법론 원전 (교과서) ===\n%s\n\n"
               "=== 어제 활동 분포 ===\n%s\n\n=== 어제 활동 (카드) ===\n%s") % (
         DISTILL_MARKER, persona, north_mentor, depth, dist_txt, "\n".join(lines))
-    text, rc = run_claude(prompt, cfg["ask_fallback_model"], cfg, "mentor",
+    text, rc = run_claude(prompt, cfg["deep_model"], cfg, "mentor",
                           timeout=cfg["do_timeout_sec"])
     if rc == 0 and text:
         MENTOR_PATH.write_text(text + "\n", encoding="utf-8")
@@ -2759,7 +2811,7 @@ def project_plan(goal, workdir, write, cfg):
               "각 spec은 이전 단계 결과를 전제해도 되지만 그 사실을 명시하라.") % (
         DISTILL_MARKER, goal, workdir,
         ("프로젝트 위키:\n" + wiki_ctx) if wiki_ctx else "")
-    text, rc = run_claude(prompt, cfg["ask_fallback_model"], cfg, "project-plan",
+    text, rc = run_claude(prompt, cfg["deep_model"], cfg, "project-plan",
                           timeout=cfg["do_timeout_sec"], max_out=6000)
     m = re.search(r"\{.*\}", text or "", re.S)
     if rc != 0 or not m:
@@ -2884,7 +2936,7 @@ def project_tick(cfg):
             wt_done = GARI_HOME / "works" / ("wt-" + pj["id"])
             notify("가리 프로젝트 — 완료", "%s (%d단계)%s" % (
                 pj["title"], len(pj["milestones"]),
-                " · 산출은 격리 브랜치 gari/wt-%s — 검토 후 합류" % pj["id"] if wt_done.exists() else ""), cfg)
+                " · 산출 합류: gari merge wt-%s" % pj["id"] if wt_done.exists() else ""), cfg)
             metric("project_done", pj["title"])
 
 
@@ -3238,7 +3290,7 @@ def main():
         "sweep": cmd_sweep, "report": cmd_report, "brief": cmd_brief,
         "status": cmd_status, "enqueue": cmd_enqueue, "done": cmd_done,
         "resolve": cmd_resolve, "log": cmd_log,
-        "ask": cmd_ask, "do": cmd_do, "pet": cmd_pet, "hud": cmd_hud, "weekly": cmd_weekly, "grade": cmd_grade, "chat": cmd_chat, "cost": cmd_cost, "doctor": cmd_doctor, "init": cmd_init, "wiki": cmd_wiki, "triage": cmd_triage, "snooze": cmd_snooze, "backfill": cmd_backfill, "project": cmd_project, "pulse": cmd_pulse,
+        "ask": cmd_ask, "do": cmd_do, "pet": cmd_pet, "hud": cmd_hud, "weekly": cmd_weekly, "grade": cmd_grade, "chat": cmd_chat, "cost": cmd_cost, "doctor": cmd_doctor, "init": cmd_init, "wiki": cmd_wiki, "triage": cmd_triage, "snooze": cmd_snooze, "backfill": cmd_backfill, "project": cmd_project, "pulse": cmd_pulse, "merge": cmd_merge,
     }
     args = sys.argv[1:]
     if not args or args[0] not in cmds:
