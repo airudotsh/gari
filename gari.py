@@ -850,6 +850,14 @@ def cmd_report(args):
     except (RuntimeError, OSError) as e:
         report += "\n## 위키 갱신\n\n- 실패: %s\n" % str(e)[:100]
 
+    # 잊힘 자가 감지 — 프리모템 1번 사인(방치사)의 알람: 죽어가면 먼저 말한다
+    ms3 = metrics_summary(3)
+    if ms3.get("brief_served", 0) == 0 and ms3.get("ask_answered", 0) == 0:
+        report += ("\n> **저 잊히고 있습니다, 형님.** 3일째 브리핑도 질문도 0회예요. "
+                   "바쁘셨다면 좋고요 — 다만 이 보고 하나만 열어주시면 저는 삽니다. "
+                   "가리가 성가셔진 거라면 그것도 말해주세요, 고치겠습니다.\n")
+        notify("가리 — 잊힘 감지", "형님, 3일째 조용하네요. 아침 보고 한 번만 열어주세요.", cfg)
+
     # 가리가 어제 대신 한 일 — 측정 루프의 표면 (기준선: 재설명 없이 굴러간 양)
     ms = metrics_summary(1)
     if ms:
