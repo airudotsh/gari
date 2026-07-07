@@ -1572,6 +1572,174 @@ def set_ask_status(text):
 CLAUDE_ENV = dict(os.environ, CLAUDE_CODE_MAX_OUTPUT_TOKENS="16000", GARI_INTERNAL="1")
 
 
+# ── 비상 속하네스 (pi 패턴 파이썬 이식, 2026-07-08) ──
+# CLI 실행자(claude/codex/gjc)가 전멸한 날의 손. OpenAI 호환 function calling 루프.
+# pi의 미니멀리즘(도구 4개, 단순 루프)은 따르되 YOLO는 안 따른다: 작업 폴더 감옥 + 스텝 상한.
+
+def _jail(workdir, path):
+    """경로 감옥 — 작업 폴더 밖 접근은 예외로 즉사 (fail-loud)."""
+    real = (Path(workdir) / path).resolve() if not Path(path).is_absolute() else Path(path).resolve()
+    if not str(real).startswith(str(Path(workdir).resolve())):
+        raise PermissionError("작업 폴더 밖 접근 거부: %s" % path)
+    return real
+
+
+AGENT_TOOLS = [
+    {"type": "function", "function": {"name": "read_file", "description": "파일 내용을 읽는다",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}}},
+    {"type": "function", "function": {"name": "write_file", "description": "파일을 새로 쓴다 (폴더 자동 생성)",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+                    "required": ["path", "content"]}}},
+    {"type": "function", "function": {"name": "edit_file", "description": "파일에서 old를 new로 정확 치환 (old는 유일해야 함)",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "old": {"type": "string"},
+                    "new": {"type": "string"}}, "required": ["path", "old", "new"]}}},
+    {"type": "function", "function": {"name": "run_bash", "description": "작업 폴더에서 셸 명령 실행 (60초 상한)",
+     "parameters": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}}},
+]
+
+
+def _agent_tool_exec(name, args, workdir):
+    if name == "read_file":
+        return _jail(workdir, args["path"]).read_text(encoding="utf-8")[:20000]
+    if name == "write_file":
+        f = _jail(workdir, args["path"])
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(args["content"], encoding="utf-8")
+        return "written: %s (%d자)" % (f, len(args["content"]))
+    if name == "edit_file":
+        f = _jail(workdir, args["path"])
+        body = f.read_text(encoding="utf-8")
+        if body.count(args["old"]) != 1:
+            return "edit 실패: old 문자열이 %d번 등장 (정확히 1번이어야 함)" % body.count(args["old"])
+        f.write_text(body.replace(args["old"], args["new"], 1), encoding="utf-8")
+        return "edited: %s" % f
+    if name == "run_bash":
+        r = subprocess.run(args["command"], shell=True, capture_output=True, text=True,
+                           timeout=60, cwd=workdir)
+        return ("rc=%d\n%s\n%s" % (r.returncode, r.stdout[-3000:], r.stderr[-1000:])).strip()
+    return "알 수 없는 도구: %s" % name
+
+
+def _api_post(ex, payload, timeout):
+    import urllib.request
+    key = os.environ.get(ex.get("key_env", ""), "") or ex.get("api_key", "")
+    req = urllib.request.Request(
+        ex["base_url"].rstrip("/") + "/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Authorization": "Bearer " + key})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def run_agent_loop(task, ex, cfg, workdir, max_steps=30):
+    """미니 에이전트 루프: LLM 호출 → 도구 호출 파싱 → 감옥 안 실행 → 결과 재주입 → 반복.
+    반환: (최종 보고 텍스트, rc). 실무 품질은 CLI 실행자보다 낮다 — 비상 차선임을 잊지 말 것."""
+    sysmsg = ("너는 파견된 실무 에이전트다. 작업 폴더(%s) 안에서만 일한다. "
+              "도구로 실제 작업을 수행하고, 다 끝나면 도구 호출 없이 결과를 보고하라. "
+              "보고는 결론 먼저, 검증한 것과 못 한 것을 구분하라.") % workdir
+    messages = [{"role": "system", "content": sysmsg}, {"role": "user", "content": task}]
+    for _step in range(max_steps):
+        try:
+            j = _api_post(ex, {"model": ex["model"], "messages": messages,
+                               "tools": AGENT_TOOLS, "max_tokens": 4000},
+                          timeout=cfg["do_timeout_sec"])
+        except Exception as e:
+            return "API 호출 실패: %s" % str(e)[:120], 1
+        msg = (j.get("choices") or [{}])[0].get("message", {})
+        messages.append(msg)
+        calls = msg.get("tool_calls") or []
+        if not calls:
+            return (msg.get("content") or "").strip() or "(빈 응답)", 0
+        for tc in calls:
+            fn = tc.get("function", {})
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+                out = _agent_tool_exec(fn.get("name", ""), args, workdir)
+            except Exception as e:
+                out = "도구 오류: %s" % str(e)[:200]
+            messages.append({"role": "tool", "tool_call_id": tc.get("id", ""),
+                             "content": str(out)[:8000]})
+    return "스텝 상한(%d) 도달 — 미완 종료" % max_steps, 1
+
+
+def _executor(cfg, name):
+    """실행자 레지스트리 조회. config "executors"에 사용자가 추가하면 코드 수정 없이 뇌가 늘어난다.
+    형태: {"deepseek": {"type": "api", "base_url": "https://api.deepseek.com/v1",
+                        "key_env": "DEEPSEEK_API_KEY", "model": "deepseek-chat"}}"""
+    builtin = {
+        "claude": {"type": "cli"},
+        "gjc": {"type": "gjc"},
+        "codex": {"type": "codex"},
+    }
+    return {**builtin, **cfg.get("executors", {})}.get(name)
+
+
+def run_api(prompt, ex, cfg, kind, timeout=None, max_out=None):
+    """OpenAI 호환 chat/completions 호출 (DeepSeek·Qwen·GLM·Kimi·OpenRouter 등 전부 이 형태).
+    표준 라이브러리만 사용 — 의존성 0. API 실행자는 '뇌 전용'(텍스트 입출력)이고 도구가 없다:
+    증류·접수·판단 폴백에는 충분하고, 파일을 만지는 파견 실무에는 못 쓴다 (그건 CLI 실행자의 몫)."""
+    import urllib.request
+    import urllib.error
+    key = os.environ.get(ex.get("key_env", ""), "") or ex.get("api_key", "")
+    if not key:
+        return "", 1
+    body = json.dumps({
+        "model": ex["model"],
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_out or 4000,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        ex["base_url"].rstrip("/") + "/chat/completions", data=body,
+        headers={"Content-Type": "application/json", "Authorization": "Bearer " + key})
+    t0 = time.time()
+    text, ok = "", False
+    try:
+        with urllib.request.urlopen(req, timeout=timeout or cfg["distill_timeout_sec"]) as resp:
+            j = json.loads(resp.read().decode("utf-8"))
+            text = (j.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+            ok = bool(text)
+    except (urllib.error.URLError, OSError, json.JSONDecodeError, KeyError):
+        ok = False
+    try:
+        with open(USAGE_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": now_iso(), "kind": kind, "model": ex.get("model"),
+                                "cost_usd": None, "sec": round(time.time() - t0, 1),
+                                "tokens": None, "ok": ok}, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+    return text, (0 if ok else 1)
+
+
+def run_brain(prompt, model, cfg, kind, tools=None, timeout=None, cwd=None, max_out=None,
+              chain=None):
+    """뇌 호출 통합 관문 + 폴백 체인. chain 미지정 시 cfg["brain_chain"] (기본 ["claude"]).
+    체인 순서대로 시도해 첫 성공을 반환 — Fable/클로드가 사라져도 다음 뇌가 자동으로 받는다.
+    도구가 필요한 호출(tools 지정)은 CLI 실행자만 시도한다 (API 실행자는 손이 없다)."""
+    chain = chain or cfg.get("brain_chain", ["claude"])
+    for name in chain:
+        ex = _executor(cfg, name)
+        if not ex:
+            continue
+        if ex["type"] == "cli":
+            text, rc = run_claude(prompt, model, cfg, kind, tools=tools, timeout=timeout,
+                                  cwd=cwd, max_out=max_out)
+        elif ex["type"] == "gjc" and not tools:
+            try:
+                r = subprocess.run([cfg["gjc_bin"], "-p", "--no-session", "--no-tools", prompt],
+                                   capture_output=True, text=True,
+                                   timeout=timeout or cfg["distill_timeout_sec"], env=CLAUDE_ENV)
+                text, rc = r.stdout.strip(), r.returncode
+            except OSError:
+                text, rc = "", 1
+        elif ex["type"] == "api" and not tools:
+            text, rc = run_api(prompt, ex, cfg, kind, timeout=timeout, max_out=max_out)
+        else:
+            continue   # 도구 필요 호출에 손 없는 실행자 — 건너뜀
+        if rc == 0 and (text or "").strip():
+            return text, 0, name
+    return "", 1, ""
+
+
 def run_claude(prompt, model, cfg, kind, tools=None, timeout=None, cwd=None, max_out=None):
     """claude -p 호출 단일 관문 — JSON 출력으로 비용·시간을 계측해 usage.jsonl에 남긴다 (fail-loud)."""
     prompt = personalize(prompt, cfg)
@@ -1910,7 +2078,10 @@ def cmd_ask(args):
                            timeout=cfg["distill_timeout_sec"], cwd=str(GARI_HOME))
         answer, rc = r.stdout.strip(), r.returncode
     else:
-        answer, rc = run_claude(full, cfg["ask_model"], cfg, "ask")
+        answer, rc, _brain = run_brain(full, cfg["ask_model"], cfg, "ask",
+                                       chain=cfg.get("brain_chain", ["claude"]))
+        if _brain and _brain != "claude":
+            metric("ask_fallback_brain", _brain)   # 어느 뇌가 받았는지 — 부품 교체의 실측
     if rc != 0 and not answer:
         set_ask_status("")
         print("[가리 응답 실패] 뇌(Claude CLI)가 응답하지 않습니다.", file=sys.stderr)
@@ -2150,7 +2321,18 @@ def cmd_do(args):
         north_head = "\n".join(north.read_text(encoding="utf-8").splitlines()[:60])
     prompt = (TEMPLATES / "do-prompt.txt").read_text(encoding="utf-8").format(
         north=north_head, cards=ctx or "(없음)", task=task)
-    if tool == "codex":
+    api_ex = _executor(cfg, tool)
+    if api_ex and api_ex.get("type") == "api":
+        # 비상 차선: API 뇌로 직접 수행 (쓰기=미니 에이전트 루프, 읽기=조언 전용)
+        print("가리: %s에서 %s(API)에게 맡깁니다%s… (비상 차선 — CLI 실행자보다 품질 낮음)" % (
+            workdir, tool, " (쓰기 허용)" if write else " (읽기 전용)"))
+        if write:
+            out, okrc = run_agent_loop(prompt, api_ex, cfg, workdir)
+        else:
+            out, okrc = run_api(prompt, api_ex, cfg, "do-api", timeout=cfg["do_timeout_sec"], max_out=6000)
+        ok = okrc == 0
+        r = type("R", (), {"returncode": okrc, "stdout": out, "stderr": ""})()
+    elif tool == "codex":
         cmd = ["codex", "exec", "--skip-git-repo-check", prompt]
     elif tool == "gjc":
         # --no-session: 형님의 gjc 세션 목록·이어하기(-c)를 오염시키지 않는다
@@ -2160,12 +2342,13 @@ def cmd_do(args):
         cmd = [cfg["claude_bin"], "-p", prompt]
         cmd += (["--permission-mode", "acceptEdits"] if write
                 else ["--allowedTools", "Read,Glob,Grep"])
-    print("가리: %s에서 %s에게 맡깁니다%s…" % (workdir, tool,
-                                              " (쓰기 허용)" if write else " (읽기 전용)"))
-    r = subprocess.run(cmd, capture_output=True, text=True,
-                       timeout=cfg["do_timeout_sec"], cwd=workdir, env=CLAUDE_ENV)
-    out = (r.stdout or "").strip() or (r.stderr or "").strip()
-    ok = r.returncode == 0
+    if not (api_ex and api_ex.get("type") == "api"):
+        print("가리: %s에서 %s에게 맡깁니다%s…" % (workdir, tool,
+                                                  " (쓰기 허용)" if write else " (읽기 전용)"))
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           timeout=cfg["do_timeout_sec"], cwd=workdir, env=CLAUDE_ENV)
+        out = (r.stdout or "").strip() or (r.stderr or "").strip()
+        ok = r.returncode == 0
     # ── 작업 완결 루프: 결과 저장 → 카드 → 알림 (나중에 ask로 회수 가능) ──
     WORKS_DIR = GARI_HOME / "works"
     WORKS_DIR.mkdir(exist_ok=True)
@@ -3083,9 +3266,23 @@ def cmd_backfill(args):
     return 0
 
 
+def _doctor_executors(cfg):
+    print("[실행자 레지스트리 — 뇌는 부품]")
+    print(" · claude (cli): %s" % ("✓ 기본 뇌" if Path(cfg["claude_bin"]).exists() else "✗ 실행파일 없음"))
+    print(" · gjc (cli): %s" % ("✓ 폴백 대기" if Path(cfg.get("gjc_bin", "/nonexistent")).exists() else "– 미설치"))
+    for name, ex in cfg.get("executors", {}).items():
+        if ex.get("type") != "api":
+            continue
+        has_key = bool(os.environ.get(ex.get("key_env", ""), "") or ex.get("api_key"))
+        print(" · %s (api, %s): %s" % (name, ex.get("model", "?"),
+              "✓ 키 있음 — 체인 편입 가능" if has_key else "– 키 없음 (%s 설정 시 활성)" % ex.get("key_env")))
+    print(" 폴백 체인: %s (config brain_chain — 도구 필요한 일은 CLI 실행자만)\n" % " → ".join(cfg.get("brain_chain", ["claude"])))
+
+
 def cmd_doctor(args):
     """가리 전제조건·건강 진단 — 첫 세팅과 '뭔가 이상할 때'의 시작점."""
     cfg = load_config()
+    _doctor_executors(cfg)
     ok_all = True
     def check(name, ok, hint="", warn=False):
         nonlocal ok_all
