@@ -1011,7 +1011,8 @@ def judge_nag(question, answer, cfg):
           "구체적 빈틈을 근거와 함께 짚으면 teach.\n"
           'JSON만: {"verdict": "teach|miss", "reason": "한 줄"}') % (
         DISTILL_MARKER, question[:200], nag[:300])
-    vtext, vrc = run_claude(vp, cfg["ask_model"], cfg, "nag-judge", timeout=60, max_out=2000)
+    vtext, vrc, _b = run_brain(vp, cfg["ask_model"], cfg, "nag-judge", timeout=60, max_out=2000,
+                               chain=cfg.get("brain_chain", ["claude"]))
     mm = re.search(r"\{.*\}", vtext or "", re.S)
     if vrc != 0 or not mm:
         return answer
@@ -1287,6 +1288,9 @@ def cron_due(cfg):
                                      cfg["ask_fallback_model"], cfg, "cron",
                                      timeout=300, max_out=3000,
                                      chain=cfg.get("brain_chain", ["claude"]))
+            if rc != 0 or not text:
+                notify("가리 예약 실패 — %s" % c.get("id", "")[:20],
+                       "%s — 다음 주기에 재시도합니다 (gari doctor 확인)" % c["prompt"][:60], cfg)
             if rc == 0 and text:
                 notify("가리 예약 — %s" % c.get("id", "")[:20], text[:120], cfg)
                 append_cards([{"id": hashlib.md5(("cron" + c.get("id", "") + now.isoformat()).encode()).hexdigest()[:8],
@@ -1407,9 +1411,13 @@ def cmd_gateway(args):
                 print("허용 외 chat_id=%s 무시" % chat, file=sys.stderr)
                 continue
             metric("gateway_msg", text[:60])
-            r = subprocess.run([str(GARI_HOME / "bin" / "gari"), "ask", text],
-                               capture_output=True, text=True, timeout=600, env=CLAUDE_ENV)
-            reply = (r.stdout or "").strip() or "(응답 실패 — gari doctor 확인)"
+            try:
+                r = subprocess.run([str(GARI_HOME / "bin" / "gari"), "ask", text],
+                                   capture_output=True, text=True,
+                                   timeout=cfg["do_timeout_sec"] + 60, env=CLAUDE_ENV)
+                reply = (r.stdout or "").strip() or "(응답 실패 — gari doctor 확인)"
+            except subprocess.TimeoutExpired:
+                reply = "(응답이 너무 오래 걸려 중단했습니다 — 질문을 쪼개서 다시 물어봐 주세요)"
             for i in range(0, len(reply), 3800):
                 try:
                     call("sendMessage", chat_id=chat, text=reply[i:i + 3800])
@@ -1908,8 +1916,9 @@ CLAUDE_ENV = dict(os.environ, CLAUDE_CODE_MAX_OUTPUT_TOKENS="16000", GARI_INTERN
 
 def _jail(workdir, path):
     """경로 감옥 — 작업 폴더 밖 접근은 예외로 즉사 (fail-loud)."""
+    root = Path(workdir).resolve()
     real = (Path(workdir) / path).resolve() if not Path(path).is_absolute() else Path(path).resolve()
-    if not str(real).startswith(str(Path(workdir).resolve())):
+    if os.path.commonpath([str(real), str(root)]) != str(root):
         raise PermissionError("작업 폴더 밖 접근 거부: %s" % path)
     return real
 
@@ -1944,8 +1953,12 @@ def _agent_tool_exec(name, args, workdir):
         f.write_text(body.replace(args["old"], args["new"], 1), encoding="utf-8")
         return "edited: %s" % f
     if name == "run_bash":
-        r = subprocess.run(args["command"], shell=True, capture_output=True, text=True,
-                           timeout=60, cwd=workdir)
+        cmdline = args["command"]
+        if re.search(r"(^|[\s;|&])(cd\s|sudo\b)|\.\.|~/|/Users/|/etc/|/private/", cmdline):
+            return "거부: 작업 폴더 밖을 향하는 명령 패턴 (절대경로·..·cd·sudo 금지 — 상대 경로로만)"
+        r = subprocess.run(cmdline, shell=True, capture_output=True, text=True,
+                           timeout=60, cwd=workdir,
+                           env={"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": workdir, "LANG": "en_US.UTF-8"})
         return ("rc=%d\n%s\n%s" % (r.returncode, r.stdout[-3000:], r.stderr[-1000:])).strip()
     return "알 수 없는 도구: %s" % name
 
@@ -2026,7 +2039,7 @@ def run_api(prompt, ex, cfg, kind, timeout=None, max_out=None):
     try:
         with urllib.request.urlopen(req, timeout=timeout or cfg["distill_timeout_sec"]) as resp:
             j = json.loads(resp.read().decode("utf-8"))
-            text = (j.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+            text = ((j.get("choices") or [{}])[0].get("message", {}).get("content") or "").strip()
             ok = bool(text)
     except (urllib.error.URLError, OSError, json.JSONDecodeError, KeyError):
         ok = False
@@ -2059,7 +2072,7 @@ def run_brain(prompt, model, cfg, kind, tools=None, timeout=None, cwd=None, max_
                                    capture_output=True, text=True,
                                    timeout=timeout or cfg["distill_timeout_sec"], env=CLAUDE_ENV)
                 text, rc = r.stdout.strip(), r.returncode
-            except OSError:
+            except (OSError, subprocess.TimeoutExpired):
                 text, rc = "", 1
         elif ex["type"] == "api" and not tools:
             text, rc = run_api(prompt, ex, cfg, kind, timeout=timeout, max_out=max_out)
@@ -2284,6 +2297,24 @@ def cmd_ask(args):
         print(answer)
         return 0
 
+    pend_c = meta.get("pending_cron")
+    if pend_c and question.strip().lower() in ("ㄱㄱ", "ㄱ", "고", "go", "진행", "진행해", "해", "해줘", "응", "웅", "yes", "y", "그래", "오케이", "ok"):
+        entry = {"id": hashlib.md5(pend_c["prompt"].encode()).hexdigest()[:6],
+                 "prompt": pend_c["prompt"], "last_run": ""}
+        if pend_c.get("every_h"):
+            entry["every_h"] = float(pend_c["every_h"])
+        else:
+            entry["daily_at"] = pend_c.get("daily_at", "09:30")
+        with open(CRONS_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        _chat_set_meta(sid, "pending_cron", None)
+        answer = "예약 등록했습니다 — %s (%s). 목록은 gari cron." % (
+            entry["prompt"][:60], "매 %g시간" % entry["every_h"] if entry.get("every_h") else "매일 " + entry["daily_at"])
+        append_chat(sid, question, answer)
+        set_ask_status("")
+        print(answer)
+        return 0
+
     pend_d = meta.get("pending_dispatch")
     if pend_d and question.strip().lower() in ("ㄱㄱ", "ㄱ", "고", "go", "진행", "진행해", "해", "해줘", "응", "웅", "yes", "y", "그래", "오케이", "ok"):
         child = [str(GARI_HOME / "bin" / "gari"), "do", pend_d["task"], "--bg"]
@@ -2476,6 +2507,10 @@ def cmd_ask(args):
         deep_prompt += wiki_block
         if prefs:
             deep_prompt += "\n\n" + prefs
+        if sk:
+            deep_prompt += "\n\n" + sk
+        if gf:
+            deep_prompt += "\n\n" + gf
         metric("ask_deep", question[:60])
         answer, rc = run_claude_stream(deep_prompt, cfg["deep_model"], cfg, "ask-deep",
                                        "Read,Glob,Grep,WebSearch,WebFetch",
@@ -2567,22 +2602,17 @@ def cmd_ask(args):
         except Exception as e:
             answer += "\n\n(계획 수립에 실패했습니다: %s — 다시 요청해 주세요.)" % str(e)[:80]
 
-    # 예약 마커: [예약: {...}] → 크론 원장 등록
-    for cm in re.finditer(r'\[예약:\s*(\{.*?\})\s*\]', answer, re.S):
+    # 예약 마커: [예약: {...}] → 파견과 동일하게 ㄱㄱ 승인 대기 (무확인 자동 등록은 인젝션 벡터)
+    mc = re.search(r'\[예약:\s*(\{.*?\})\s*\]', answer, re.S)
+    if mc:
+        answer = answer.replace(mc.group(0), "").strip()
         try:
-            cj = json.loads(cm.group(1))
+            cj = json.loads(mc.group(1))
             if cj.get("prompt"):
-                entry = {"id": hashlib.md5(cj["prompt"].encode()).hexdigest()[:6],
-                         "prompt": cj["prompt"], "last_run": ""}
-                if cj.get("every_h"):
-                    entry["every_h"] = float(cj["every_h"])
-                else:
-                    entry["daily_at"] = cj.get("daily_at", "09:30")
-                with open(CRONS_PATH, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                _chat_set_meta(sid, "pending_cron", cj)
+                answer += "\n\n(등록하시려면 \"ㄱㄱ\" — 예약은 승인 후에만 원장에 올라갑니다)"
         except (json.JSONDecodeError, ValueError):
             pass
-        answer = answer.replace(cm.group(0), "").strip()
 
     # 파견 제안 마커: [파견: {"task":..,"dir":..,"write":..}] → 세션에 대기 등록, 표시는 사람 문장만
     m = re.search(r'\[파견:\s*(\{.*?\})\s*\]', answer, re.S)
@@ -2651,7 +2681,7 @@ def cmd_do(args):
     # 형님이 작업 중인 원본과 절대 충돌하지 않게. 합류(머지)는 형님 검토 후 (자동 머지 금지).
     wt_branch, orig_workdir = None, workdir
     real = Path(workdir).expanduser().resolve()
-    if write and real.exists() and not str(real).startswith(str(GARI_HOME)):
+    if write and real.exists() and real != GARI_HOME and GARI_HOME not in real.parents:
         in_git = subprocess.run(["git", "-C", str(real), "rev-parse", "--git-dir"],
                                 capture_output=True).returncode == 0
         if in_git:
@@ -2918,13 +2948,6 @@ def cmd_hud(args):
                          if ns.exists() else "(아침 보고 때 산출됩니다)"))
 
     approvals = load_json(GARI_HOME / "pending-approvals.json", [])
-    if PROJECTS_DIR.exists():
-        for pf in PROJECTS_DIR.glob("p-*.json"):
-            pj = load_json(pf, {})
-            if pj.get("status") == "awaiting_approval":
-                approvals.append("프로젝트 결재: %s (%d단계 계획)" % (pj.get("title", ""), len(pj.get("milestones", []))))
-            elif pj.get("status") == "escalated":
-                approvals.append("프로젝트 막힘 — 판단 필요: %s" % pj.get("title", ""))
     if PROJECTS_DIR.exists():
         for pf in PROJECTS_DIR.glob("p-*.json"):
             pj = load_json(pf, {})
@@ -3348,8 +3371,9 @@ def project_plan(goal, workdir, write, cfg):
               "각 spec은 재시도될 수 있다 — 이미 있으면 확인 후 이어서 완성하도록(중복 생성 금지) 지시를 쓰라.") % (
         DISTILL_MARKER, goal, workdir,
         ("프로젝트 위키:\n" + wiki_ctx) if wiki_ctx else "")
-    text, rc = run_claude(prompt, cfg["deep_model"], cfg, "project-plan",
-                          timeout=cfg["do_timeout_sec"], max_out=6000)
+    text, rc, _b = run_brain(prompt, cfg["deep_model"], cfg, "project-plan",
+                             timeout=cfg["do_timeout_sec"], max_out=6000,
+                             chain=cfg.get("brain_chain", ["claude"]))
     m = re.search(r"\{.*\}", text or "", re.S)
     if rc != 0 or not m:
         raise RuntimeError("계획 수립 실패")
@@ -3358,7 +3382,9 @@ def project_plan(goal, workdir, write, cfg):
     pj = {"id": pid, "title": plan.get("title", goal[:40]), "goal": goal,
           "acceptance": plan.get("acceptance", ""), "dir": workdir, "write": bool(write),
           "milestones": [{"n": ms.get("n", i + 1),
-                          "deps": [d for d in (ms.get("deps") or []) if isinstance(d, int)],
+                          "deps": ([d for d in ms["deps"] if isinstance(d, int)]
+                                   if isinstance(ms.get("deps"), list)
+                                   else ([ms.get("n", i + 1) - 1] if ms.get("n", i + 1) > 1 else [])),
                           "spec": ms["spec"],
                           "accept": ms.get("accept", ""), "status": "pending",
                           "attempts": 0, "work_file": "", "proof": ""}
@@ -3413,24 +3439,28 @@ def project_verify(pj, ms, cfg):
     vwt = GARI_HOME / "works" / ("wt-" + pj["id"])
     if vwt.exists():
         vp = vp.replace(str(Path(pj["dir"]).expanduser().resolve()), str(vwt)).replace(pj["dir"], str(vwt))
+    # 도구(Read/Grep)가 필요해 CLI 실행자 전용 — API 뇌 폴백 불가 (손이 없다)
     vtext, vrc = run_claude_stream(vp, cfg["ask_model"], cfg, "project-verify",
                                    "Read,Glob,Grep", timeout=180,
                                    cwd=str(vwt) if vwt.exists() else pj["dir"])
+    if vrc != 0 or not (vtext or "").strip():
+        return None, "검수 인프라 실패 (뇌 무응답) — 다음 박자 재시도"   # 실패≠불통과
     m = re.search(r"\{.*\}", vtext or "", re.S)
     try:
         vj = json.loads(m.group(0)) if m else {}
     except json.JSONDecodeError:
         vj = {}
-    return bool(vj.get("pass")), strip_code_coords(str(vj.get("proof", "검수 응답 파싱 실패")))[:150]
+    if not vj:
+        return None, "검수 응답 파싱 실패 — 다음 박자 재시도"
+    return bool(vj.get("pass")), strip_code_coords(str(vj.get("proof", "")))[:150]
 
 
 def _ms_ready(pj, ms):
-    """의존성 그래프 판정 — deps가 전부 done이면 파견 가능. deps 없으면 직전 단계(순차 호환)."""
+    """의존성 그래프 판정 — 저장된 deps만 신뢰 (저장 시점에 미지정은 순차로 확정됨).
+    None(구버전 카드)만 직전 단계 폴백."""
     deps = ms.get("deps")
-    if deps is None or deps == []:
-        deps = [ms["n"] - 1] if ms["n"] > 1 and not ms.get("deps") == [] else []
-    if ms.get("deps") == []:
-        deps = []   # 명시적 빈 deps = 뿌리 (병렬 시작점)
+    if deps is None:
+        deps = [ms["n"] - 1] if ms["n"] > 1 else []
     done_ns = {m["n"] for m in pj["milestones"] if m["status"] == "done"}
     return all(d in done_ns for d in deps)
 
@@ -3453,7 +3483,8 @@ def project_replan(pj, trigger, cfg):
         trigger[:400],
         "; ".join("%d) %s" % (m["n"], m["spec"][:60]) for m in rest) or "(없음)",
         (max((m["n"] for m in done), default=0) + 1))
-    text, rc = run_claude(prompt, cfg["deep_model"], cfg, "project-replan", timeout=300, max_out=4000)
+    text, rc, _b = run_brain(prompt, cfg["deep_model"], cfg, "project-replan", timeout=300, max_out=4000,
+                             chain=cfg.get("brain_chain", ["claude"]))
     m = re.search(r"\{.*\}", text or "", re.S)
     if rc != 0 or not m:
         return False
@@ -3494,6 +3525,9 @@ def project_tick(cfg):
                     notify("가리 프로젝트 — 발견 보고", "%s: %s" % (pj["title"], found[:80]), cfg, urgent=True)
                 continue
             ok, proof = project_verify(pj, ms, cfg)
+            if ok is None:
+                project_log(pj, "%d단계 검수 보류 — %s" % (ms["n"], proof))
+                continue   # attempts 미소모 — 인프라 실패는 산출물 탓이 아니다
             if ok:
                 ms["status"] = "done"
                 ms["proof"] = proof
