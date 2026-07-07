@@ -1299,9 +1299,13 @@ def run_claude(prompt, model, cfg, kind, tools=None, timeout=None, cwd=None, max
         cmd += ["--allowedTools", tools]
     t0 = time.time()
     env = dict(CLAUDE_ENV, CLAUDE_CODE_MAX_OUTPUT_TOKENS=str(max_out)) if max_out else CLAUDE_ENV
-    r = subprocess.run(cmd, capture_output=True, text=True,
-                       timeout=timeout or cfg["distill_timeout_sec"],
-                       cwd=cwd or str(GARI_HOME), env=env)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           timeout=timeout or cfg["distill_timeout_sec"],
+                           cwd=cwd or str(GARI_HOME), env=env)
+    except OSError:
+        # 실행파일 자체가 죽어 있음 — 정상 실패로 변환해 폴백 경로가 잡게 한다
+        return "", 1
     dur = round(time.time() - t0, 1)
     text, cost, tokens = "", None, None
     if r.returncode == 0 and r.stdout.strip():

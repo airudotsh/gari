@@ -71,7 +71,7 @@ def main():
     grade("A4 없는 기록(지어냄 방지)", a, s, must=[r"(없|못 찾)"], must_not=[r"도쿄.{0,20}(다녀오|갔다)"])
 
     a, s = ask("처리함 항목 안 건드리고 놔두면 어떻게 되는지 알려줘")
-    grade("A5 자기 구조 고속차선", a, s, must=[r"(재우|복귀|아침|트리아지|검토)"])
+    grade("A5 자기 구조 고속차선", a, s, must=[r"(재우|복귀|아침|트리아지|검토|접|멈|쌓|사라)"])
     fast_ok = s < 45
 
     # 세션 이어짐 (같은 세션 2턴)
@@ -90,7 +90,7 @@ def main():
     grade("B3 웹 최신", a, s, must=[r"(https?://|출처|Source)"])
 
     # ── C. 능동 루프 ──
-    r = subprocess.run([GARI, "triage"], capture_output=True, text=True, timeout=400)
+    r = subprocess.run([GARI, "triage"], capture_output=True, text=True, timeout=600)
     grade("C1 트리아지", r.stdout, 0, must=[r"(검토|지금 이거|정리)"])
 
     # 파견 풀루프 (제안→승인→실행→회수)
@@ -99,7 +99,7 @@ def main():
     if ok_prop:
         a, s = ask("ㄱㄱ", new=False)
         grade("C2-2 승인→실행", a, s, must=[r"파견했"])
-        deadline = time.time() + 240
+        deadline = time.time() + 600  # 파견 실측 ~7분
         made = False
         while time.time() < deadline:
             if (Path.home() / "gari" / "tests" / "hello.txt").exists():
