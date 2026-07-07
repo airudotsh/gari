@@ -926,6 +926,82 @@ def cmd_report(args):
     return 0
 
 
+MISSES_PATH = STORE / "misses.jsonl"
+
+
+def grade_feedback(cards=None):
+    """채점(맞음/오발) → 참견 조준 보정문. 채점이 없으면 빈 문자열 (주입 생략).
+    cards에 전체 원장을 넘겨도 내부에서 최근 14일 창만 쓴다 (낡은 오발이 영구히 조준을 흔들지 않게)."""
+    cards = cards if cards is not None else read_cards(14)
+    cut = (datetime.now().astimezone() - timedelta(days=14)).isoformat()
+    grades = [c for c in cards if c.get("type") == "grade" and c.get("ts", "9") >= cut]
+    if not grades:
+        return ""
+    hit = [c for c in grades if c.get("verdict") == "right"]
+    miss = [c for c in grades if c.get("verdict") != "right"]
+    txt = lambda c: c["text"].split(": ", 1)[-1][:70]
+    out = ["[채점 피드백 — 참견 조준 보정] 최근 2주 채점 %d건: 맞음 %d · 오발 %d." % (
+        len(grades), len(hit), len(miss))]
+    if miss:
+        out.append("헛짚었던 참견 (같은 계열은 자제하고 각도를 바꿔라):")
+        out += ["- " + txt(c) for c in miss[-3:]]
+    if hit:
+        out.append("적중했던 참견 (이런 계열이 형님에게 유효하다):")
+        out += ["- " + txt(c) for c in hit[-2:]]
+    return "\n".join(out)
+
+
+def log_miss(question):
+    """가리가 답을 못 찾은 질문 — 기억 구조 개선의 재료 (주간 반성 입력)."""
+    with open(MISSES_PATH, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"ts": now_iso(), "q": question[:200]}, ensure_ascii=False) + "\n")
+
+
+def read_misses(days=7):
+    if not MISSES_PATH.exists():
+        return []
+    cut = (datetime.now().astimezone() - timedelta(days=days)).isoformat()
+    rows = []
+    for line in MISSES_PATH.read_text(encoding="utf-8").splitlines():
+        try:
+            r = json.loads(line)
+            if r.get("ts", "") >= cut:
+                rows.append(r)
+        except json.JSONDecodeError:
+            continue
+    return rows
+
+
+def compose_reflection(cards, cfg):
+    """주간 반성 — 교정·오발·회수 실패에서 규칙 후보를 뽑는다 (쓸수록 똑똑해지는 루프의 심장).
+    후보는 [지시:] 배관에 태울 반영 문구로 제시 — 결재는 형님이 채팅 한 마디로."""
+    corr = [c["text"][:100] for c in cards if c.get("type") == "correction"][-8:]
+    misfires = [c["text"][:100] for c in cards
+                if c.get("type") == "grade" and c.get("verdict") != "right"][-5:]
+    misses = ["질문: " + m["q"][:80] for m in read_misses(7)][-5:]
+    repeats = [c["text"][:100] for c in cards if c.get("type") == "repeat"][-5:]
+    if not (corr or misfires or misses or repeats):
+        return "- (이번 주 반성 재료 없음 — 교정·오발·회수 실패 0건. 좋은 주였습니다)"
+    prompt = ("%s 너는 가리 — 자기 행동을 교정하는 비서다. 아래는 이번 주 네가 틀렸거나(교정), "
+              "헛짚었거나(참견 오발), 답을 못 찾았거나(회수 실패), 형님이 같은 말을 반복하게 만든(재설명) 기록이다.\n\n"
+              "교정:\n%s\n\n참견 오발:\n%s\n\n회수 실패:\n%s\n\n재설명:\n%s\n\n"
+              "이 기록에서 '다음 주의 너'의 행동을 바꿀 규칙 후보를 최대 3개만 뽑아라. 반드시 위 기록이 근거여야 하고,"
+              " 근거 없는 일반론 금지. 각 후보는 정확히 두 줄:\n"
+              "N) 진단 한 줄 (어떤 기록에서 왜)\n"
+              "   반영 문구: \"앞으로 <행동 규칙>해줘\"\n"
+              "규칙 후보가 안 뽑히면 '- 규칙화할 패턴 없음'이라고만 써라.") % (
+        DISTILL_MARKER,
+        "\n".join("- " + t for t in corr) or "- (없음)",
+        "\n".join("- " + t for t in misfires) or "- (없음)",
+        "\n".join("- " + t for t in misses) or "- (없음)",
+        "\n".join("- " + t for t in repeats) or "- (없음)")
+    text, rc = run_claude(prompt, cfg["ask_fallback_model"], cfg, "weekly-reflect",
+                          timeout=420, max_out=2500)
+    if rc != 0 or not (text or "").strip():
+        return "- 반성 산출 실패 (모델 호출 오류) — 다음 주간 보고에서 재시도"
+    return text.strip()
+
+
 def cmd_weekly(args):
     """주간 종합보고 — 지난 7일 카드의 추세·결정·교정·연승 집계 (월 09:30 launchd)."""
     cfg = load_config()
@@ -981,8 +1057,15 @@ def cmd_weekly(args):
     repeat_trend = "이번 주 %d건 (지난주 %d건) — %s" % (
         rep_this, rep_prev,
         "감소 ↓" if rep_this < rep_prev else ("동일" if rep_this == rep_prev else "증가 ↑ (규칙화 검토)"))
+    try:
+        reflection = compose_reflection(cards, cfg)
+    except Exception as e:
+        reflection = "- 반성 산출 실패(%s)" % str(e)[:60]
+    wk_misses = read_misses(7)
+    misses_txt = "\n".join("- " + m["q"][:90] for m in wk_misses[-8:]) or "- (없음)"
     tmpl = (TEMPLATES / "weekly-report.md.tmpl").read_text(encoding="utf-8")
     report = tmpl.format(
+        reflection=reflection, miss_count=len(wk_misses), misses=misses_txt,
         repeat_trend=repeat_trend,
         week_label=week_label, card_total=len(cards),
         daily_avg=round(len(cards) / max(len(per_day), 1), 1),
@@ -1607,6 +1690,9 @@ def cmd_ask(args):
     prefs = load_prefs()
     if prefs:
         lenses = lenses + "\n\n" + prefs
+    gf = grade_feedback(pool)
+    if gf:
+        lenses = lenses + "\n\n" + gf
     # 순서 = 캐시 계층: 안 변하는 것(페르소나·렌즈) → 가끔 변하는 것(카드) → 매 턴 변하는 것(문답·질문)
     # 프롬프트 캐시는 앞부분 일치 구간만 재사용하므로, 자주 변하는 걸 뒤로 보낼수록 싸고 빨라진다
     full = "%s %s\n\n%s\n\n=== 카드 (최근) ===\n%s\n\n=== 이전 문답 (이어지는 대화) ===\n%s\n\n=== 형님의 질문 ===\n%s" % (
@@ -1805,6 +1891,8 @@ def cmd_ask(args):
 
     set_ask_status("")
     metric("ask_answered", question[:60])
+    if re.search(r"(기록은 없|기록이 없|못 찾았|찾을 수 없)", answer):
+        log_miss(question)   # 회수 실패 — 주간 반성의 재료
     append_chat(sid, question, answer)   # 대화 이어짐의 원장
     print(answer)
     return 0

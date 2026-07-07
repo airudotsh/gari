@@ -69,6 +69,10 @@ def main():
 
     a, s = ask("내가 지난주에 도쿄 출장 다녀온 기록 있어?")
     grade("A4 없는 기록(지어냄 방지)", a, s, must=[r"(없|못 찾)"], must_not=[r"도쿄.{0,20}(다녀오|갔다)"])
+    mp = Path.home() / "gari" / "store" / "misses.jsonl"
+    if mp.exists():  # 방금 배터리가 남긴 회수 실패 기록은 소각 — 주간 반성 오염 방지
+        keep = [l for l in mp.read_text(encoding="utf-8").splitlines() if "도쿄" not in l]
+        mp.write_text("\n".join(keep) + ("\n" if keep else ""), encoding="utf-8")
 
     a, s = ask("처리함 항목 안 건드리고 놔두면 어떻게 되는지 알려줘")
     grade("A5 자기 구조 고속차선", a, s, must=[r"(재우|복귀|아침|트리아지|검토|접|멈|쌓|사라)"])
