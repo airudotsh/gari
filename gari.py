@@ -673,6 +673,10 @@ def _sweep_inner(args, cfg):
         notify("가리 — 적재 영수증",
                "묶음 %d개 정리 — 카드 %d (결정 %d · 미결 %d)" % (closed, total, dec, pen), cfg)
         rebuild_briefing(cfg)
+    try:
+        project_tick(cfg)  # 진행 중 프로젝트 상태머신 한 박자 — 새 카드 유무와 무관하게 매 스윕
+    except Exception as e:
+        errors.append("project-tick: %s" % e)
     if errors:
         print("[sweep 오류]\n" + "\n".join(errors), file=sys.stderr)
     print("sweep 완료: 닫은 묶음 %d, 오류 %d" % (closed, len(errors)))
@@ -685,7 +689,9 @@ def rebuild_briefing(cfg):
     cards = read_cards(cfg["briefing_days"])
     pend = open_pendings(cards)
     dec = [c for c in cards if c["type"] == "decision"][-cfg["briefing_max_items"]:]
-    lines = ["<가리 브리핑 — %s 갱신>" % now_iso()]
+    lines = ["<가리 브리핑 — %s 갱신>" % now_iso(),
+             "[역할 경계] 이 브리핑은 비서 '가리'가 제공하는 맥락 자료다. 이걸 읽는 너(Claude/Codex/gjc 등)는 가리가 아니다 —",
+             "가리의 페르소나(형님 호칭, 참견, 보고 습관)를 흉내내지 마라. 너는 본연의 실무 도구로 일하고, 이 내용은 참고만 하라."]
     if dec:
         lines.append("최근 결정:")
         for c in dec:
@@ -1508,6 +1514,27 @@ def cmd_ask(args):
 
     # 파견 승인 루프: 직전에 제안한 파견이 있고 형님이 승인하면 → 실제 파견 (백그라운드)
     meta, _turns = chat_read(sid)
+    pend_p = meta.get("pending_project")
+    if pend_p and question.strip().lower() in ("ㄱㄱ", "ㄱ", "고", "go", "진행", "진행해", "해", "해줘", "응", "웅", "yes", "y", "그래", "오케이", "ok"):
+        pj = load_json(_proj_path(pend_p), {})
+        if pj:
+            pj["status"] = "running"
+            project_log(pj, "대화 결재 — 가동")
+            try:
+                project_tick(cfg)
+            except Exception as e:
+                print("project-kick 오류: %s" % e, file=sys.stderr)
+            answer = ("프로젝트 가동했습니다, 형님 — '%s' %d단계. 1단계를 방금 파견했고, "
+                      "이후는 10분 심장박동이 단계마다 실물 검수로 관리합니다. 막히면 알림 드립니다.") % (
+                pj.get("title", ""), len(pj.get("milestones", [])))
+        else:
+            answer = "결재 대기 중이던 프로젝트 기록을 못 찾았습니다, 형님 — 다시 요청해 주세요."
+        _chat_set_meta(sid, "pending_project", None)
+        append_chat(sid, question, answer)
+        set_ask_status("")
+        print(answer)
+        return 0
+
     pend_d = meta.get("pending_dispatch")
     if pend_d and question.strip().lower() in ("ㄱㄱ", "ㄱ", "고", "go", "진행", "진행해", "해", "해줘", "응", "웅", "yes", "y", "그래", "오케이", "ok"):
         child = [str(GARI_HOME / "bin" / "gari"), "do", pend_d["task"], "--bg"]
@@ -1747,6 +1774,23 @@ def cmd_ask(args):
                 f.write("- (%s) %s\n" % (datetime.now().strftime("%m/%d"), note))
     answer = re.sub(r'\s*\[지시:[^\]]*\]', '', answer).strip()
 
+    # 프로젝트 제안 마커: [프로젝트: {"goal":..,"dir":..,"write":..}] → 계획서 작성 → 결재 대기
+    mp = re.search(r'\[프로젝트:\s*(\{.*?\})\s*\]', answer, re.S)
+    if mp:
+        answer = answer.replace(mp.group(0), "").strip()
+        try:
+            prop = json.loads(mp.group(1))
+            set_ask_status("큰일이라 계획서부터 만드는 중…")
+            pj = project_plan(prop.get("goal", question), prop.get("dir") or str(Path.cwd()),
+                              prop.get("write", True), cfg)
+            _chat_set_meta(sid, "pending_project", pj["id"])
+            steps = "\n".join("  %d. %s" % (ms["n"], ms["spec"][:90]) for ms in pj["milestones"])
+            answer += ("\n\n계획서를 만들었습니다 — '%s' %d단계:\n%s\n완료 기준: %s\n"
+                       "결재하시면(ㄱㄱ) 1단계부터 파견하고, 단계마다 실물 검수 후 진행합니다.") % (
+                pj["title"], len(pj["milestones"]), steps, pj["acceptance"][:120])
+        except Exception as e:
+            answer += "\n\n(계획 수립에 실패했습니다: %s — 다시 요청해 주세요.)" % str(e)[:80]
+
     # 파견 제안 마커: [파견: {"task":..,"dir":..,"write":..}] → 세션에 대기 등록, 표시는 사람 문장만
     m = re.search(r'\[파견:\s*(\{.*?\})\s*\]', answer, re.S)
     if m:
@@ -1771,7 +1815,7 @@ def cmd_do(args):
     가리가 저장소 맥락을 지시문에 포장해 실무 AI에게 맡기고 결과를 보고한다.
     결과 세션은 다음 스윕에서 자동 적재된다 (자기 기록 루프)."""
     cfg = load_config()
-    workdir, tool, write, bg, task_words = None, cfg["do_tool_default"], False, False, []
+    workdir, tool, write, bg, mark, task_words = None, cfg["do_tool_default"], False, False, None, []
     i = 0
     while i < len(args):
         if args[i] == "--in":
@@ -1784,6 +1828,9 @@ def cmd_do(args):
             write = True
         elif args[i] == "--bg":
             bg = True
+        elif args[i] == "--mark":
+            i += 1
+            mark = args[i]
         else:
             task_words.append(args[i])
         i += 1
@@ -1794,6 +1841,7 @@ def cmd_do(args):
         if workdir: child_args += ["--in", workdir]
         if tool != cfg["do_tool_default"]: child_args += ["--tool", tool]
         if write: child_args.append("--write")
+        if mark: child_args += ["--mark", mark]
         log = open(STORE / "do-bg.log", "a")
         subprocess.Popen(child_args, stdout=log, stderr=log, start_new_session=True)
         print("파견했습니다, 형님 — 끝나면 알림으로 보고드립니다. (백그라운드)")
@@ -1837,6 +1885,16 @@ def cmd_do(args):
                             "쓰기 허용" if write else "읽기 전용",
                             "완료" if ok else "실패(rc=%d)" % r.returncode, out),
                          encoding="utf-8")
+    if mark and ":" in mark:
+        # 프로젝트 마일스톤 도장 — 검수 대기로 전환 (성패 판단은 검수가 한다)
+        mpid, mn = mark.split(":", 1)
+        mpj = load_json(_proj_path(mpid), {})
+        for mms in mpj.get("milestones", []):
+            if str(mms["n"]) == mn and mms["status"] == "running":
+                mms["status"] = "verifying"
+                mms["work_file"] = str(work_file)
+                project_log(mpj, "%s단계 실무 보고 도착 — 검수 대기" % mn)
+                break
     summary = out.replace("\n", " ")[:180]
     append_cards([{"id": hashlib.md5((stamp + task).encode()).hexdigest()[:8],
                    "ts": now_iso(), "tool": "gari-do", "project": workdir,
@@ -2009,6 +2067,20 @@ def cmd_hud(args):
                          if ns.exists() else "(아침 보고 때 산출됩니다)"))
 
     approvals = load_json(GARI_HOME / "pending-approvals.json", [])
+    if PROJECTS_DIR.exists():
+        for pf in PROJECTS_DIR.glob("p-*.json"):
+            pj = load_json(pf, {})
+            if pj.get("status") == "awaiting_approval":
+                approvals.append("프로젝트 결재: %s (%d단계 계획)" % (pj.get("title", ""), len(pj.get("milestones", []))))
+            elif pj.get("status") == "escalated":
+                approvals.append("프로젝트 막힘 — 판단 필요: %s" % pj.get("title", ""))
+    if PROJECTS_DIR.exists():
+        for pf in PROJECTS_DIR.glob("p-*.json"):
+            pj = load_json(pf, {})
+            if pj.get("status") in ("running", "awaiting_approval", "escalated"):
+                done_n = len([m for m in pj.get("milestones", []) if m["status"] == "done"])
+                tag = {"running": "진행", "awaiting_approval": "결재 대기", "escalated": "막힘!"}[pj["status"]]
+                approvals.append("[%s] 프로젝트 '%s' %d/%d단계" % (tag, pj.get("title", ""), done_n, len(pj.get("milestones", []))))
     section("결재 대기 %d건" % len(approvals), approvals, lambda a: "□ " + a)
 
     pend = open_pendings(cards)[-8:]
@@ -2388,6 +2460,203 @@ def cmd_wiki(args):
     return 0
 
 
+PROJECTS_DIR = STORE / "projects"
+
+
+def _proj_path(pid):
+    return PROJECTS_DIR / (pid + ".json")
+
+
+def project_log(pj, event):
+    pj.setdefault("log", []).append({"ts": now_iso(), "event": event[:200]})
+    pj["updated"] = now_iso()
+    PROJECTS_DIR.mkdir(exist_ok=True)
+    save_json(_proj_path(pj["id"]), pj)
+
+
+def project_plan(goal, workdir, write, cfg):
+    """큰일 접수 → 마일스톤 계획서 (가리가 PM으로서 쪼갠다). 승인 전까지는 초안."""
+    wiki_ctx = ""
+    for wf in (WIKI_DIR.glob("*.md") if WIKI_DIR.exists() else []):
+        if wf.stem[:6].lower() in workdir.lower():
+            wiki_ctx = wf.read_text(encoding="utf-8")[:2000]
+            break
+    prompt = ("%s 너는 가리 — PM이다. 아래 큰일을 실무 AI에게 단계 파견할 계획서로 쪼개라.\n"
+              "목표: %s\n작업 폴더: %s\n%s\n"
+              "JSON만 출력:\n"
+              '{"title": "짧은 제목", "acceptance": "전체 완료 기준 — 검수자가 코드·파일로 확인 가능하게",\n'
+              ' "milestones": [{"n": 1, "spec": "실무자에게 줄 자족적 한 단락 지시 (파일 경로 포함)", '
+              '"accept": "이 단계의 검증 가능한 완료 기준"}]}\n'
+              "규칙: 마일스톤 2~6개, 각각 독립 검수 가능해야 함. 순서는 의존성 순. "
+              "각 spec은 이전 단계 결과를 전제해도 되지만 그 사실을 명시하라.") % (
+        DISTILL_MARKER, goal, workdir,
+        ("프로젝트 위키:\n" + wiki_ctx) if wiki_ctx else "")
+    text, rc = run_claude(prompt, cfg["ask_fallback_model"], cfg, "project-plan",
+                          timeout=cfg["do_timeout_sec"], max_out=6000)
+    m = re.search(r"\{.*\}", text or "", re.S)
+    if rc != 0 or not m:
+        raise RuntimeError("계획 수립 실패")
+    plan = json.loads(m.group(0))
+    pid = "p-" + hashlib.md5((goal + now_iso()).encode()).hexdigest()[:6]
+    pj = {"id": pid, "title": plan.get("title", goal[:40]), "goal": goal,
+          "acceptance": plan.get("acceptance", ""), "dir": workdir, "write": bool(write),
+          "milestones": [{"n": ms.get("n", i + 1), "spec": ms["spec"],
+                          "accept": ms.get("accept", ""), "status": "pending",
+                          "attempts": 0, "work_file": "", "proof": ""}
+                         for i, ms in enumerate(plan.get("milestones", [])) if ms.get("spec")],
+          "status": "awaiting_approval", "created": now_iso(), "log": []}
+    if not pj["milestones"]:
+        raise RuntimeError("마일스톤 0개 — 계획 무효")
+    project_log(pj, "계획 수립: 마일스톤 %d개" % len(pj["milestones"]))
+    return pj
+
+
+def project_dispatch(pj, ms, cfg):
+    """마일스톤 하나를 실무자에게 백그라운드 파견."""
+    prior = "; ".join("%d단계 완료(%s)" % (m["n"], (m.get("proof") or "검수 통과")[:60])
+                      for m in pj["milestones"] if m["status"] == "done")
+    spec = ("[가리 프로젝트 '%s' — %d/%d단계] %s%s\n이 단계의 완료 기준: %s") % (
+        pj["title"], ms["n"], len(pj["milestones"]), ms["spec"],
+        ("\n이전 단계: " + prior) if prior else "", ms["accept"] or "보고로 판단")
+    cmd = [str(GARI_HOME / "bin" / "gari"), "do", spec, "--bg",
+           "--in", pj["dir"], "--mark", "%s:%d" % (pj["id"], ms["n"])]
+    if pj.get("write"):
+        cmd.append("--write")
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
+    ms["status"] = "running"
+    ms["dispatched"] = now_iso()
+    project_log(pj, "%d단계 파견" % ms["n"])
+
+
+def project_verify(pj, ms, cfg):
+    """단계 검수 — 보고서가 아니라 저장소 실물로 (말→코드 검증 재사용)."""
+    report_tail = ""
+    if ms.get("work_file") and Path(ms["work_file"]).exists():
+        report_tail = Path(ms["work_file"]).read_text(encoding="utf-8")[-1500:]
+    vp = ("%s 검수 임무. 프로젝트: %s\n이 단계 지시: %s\n완료 기준: %s\n실무자 보고(끝부분): %s\n"
+          "저장소에서 Read/Glob/Grep으로 **실물을 확인**하고 판정하라. "
+          'JSON만: {"pass": true|false, "proof": "확인한 파일:내용 또는 불충족 사유 한 줄"}') % (
+        DISTILL_MARKER, pj["title"], ms["spec"][:300], ms["accept"][:200] or "보고 내용 일치",
+        report_tail[:800])
+    vtext, vrc = run_claude_stream(vp, cfg["ask_model"], cfg, "project-verify",
+                                   "Read,Glob,Grep", timeout=180, cwd=pj["dir"])
+    m = re.search(r"\{.*\}", vtext or "", re.S)
+    try:
+        vj = json.loads(m.group(0)) if m else {}
+    except json.JSONDecodeError:
+        vj = {}
+    return bool(vj.get("pass")), str(vj.get("proof", "검수 응답 파싱 실패"))[:150]
+
+
+def project_tick(cfg):
+    """상태머신 한 박자 — 스윕마다 호출. 파견 완료 감지→검수→다음 단계/에스컬레이션."""
+    if not PROJECTS_DIR.exists():
+        return
+    for pf in PROJECTS_DIR.glob("p-*.json"):
+        pj = load_json(pf, {})
+        if pj.get("status") != "running":
+            continue
+        for ms in pj["milestones"]:
+            if ms["status"] == "done":
+                continue
+            if ms["status"] == "pending":
+                project_dispatch(pj, ms, cfg)
+                break
+            if ms["status"] == "running":
+                # 완료는 do --mark가 verifying으로 바꿔줌. 40분 넘게 무소식이면 유실 간주
+                try:
+                    age = (datetime.now().astimezone()
+                           - datetime.fromisoformat(ms.get("dispatched", now_iso()))).total_seconds()
+                except ValueError:
+                    age = 0
+                if age > 2400:
+                    ms["status"] = "verifying"
+                    project_log(pj, "%d단계 응답 지연 — 강제 검수 진입" % ms["n"])
+                break
+            if ms["status"] == "verifying":
+                ok, proof = project_verify(pj, ms, cfg)
+                if ok:
+                    ms["status"] = "done"
+                    ms["proof"] = proof
+                    project_log(pj, "%d단계 검수 통과 — %s" % (ms["n"], proof))
+                    metric("project_ms_done", pj["title"])
+                else:
+                    ms["attempts"] += 1
+                    project_log(pj, "%d단계 검수 불통과(%d회) — %s" % (ms["n"], ms["attempts"], proof))
+                    if ms["attempts"] >= 2:
+                        pj["status"] = "escalated"
+                        project_log(pj, "에스컬레이션 — 형님 판단 필요")
+                        notify("가리 프로젝트 — 막힘", "%s %d단계: %s" % (pj["title"], ms["n"], proof[:60]), cfg)
+                    else:
+                        ms["spec"] += "\n[재시도 %d — 이전 시도 불충족 사유: %s. 이 부분을 반드시 해결하라]" % (
+                            ms["attempts"], proof)
+                        ms["status"] = "pending"
+                break
+        else:
+            pj["status"] = "done"
+            project_log(pj, "프로젝트 완료 — 전 단계 검수 통과")
+            append_cards([{"id": hashlib.md5(("proj" + pj["id"]).encode()).hexdigest()[:8],
+                           "ts": now_iso(), "tool": "gari-pm", "project": pj["dir"],
+                           "session": pj["id"], "burst": pj["id"], "type": "win",
+                           "text": "(가리 프로젝트 완료) %s — %d단계 전부 실측 검수 통과" % (
+                               pj["title"], len(pj["milestones"]))}])
+            notify("가리 프로젝트 — 완료", "%s (%d단계)" % (pj["title"], len(pj["milestones"])), cfg)
+            metric("project_done", pj["title"])
+
+
+def cmd_project(args):
+    """gari project — 큰일 파견 PM. new "<목표>" --in <dir> [--write] / approve <id> / tick / show <id> / 목록"""
+    cfg = load_config()
+    PROJECTS_DIR.mkdir(exist_ok=True)
+    if args and args[0] == "new":
+        rest, workdir, write = [], str(Path.cwd()), False
+        i = 1
+        while i < len(args):
+            if args[i] == "--in":
+                i += 1
+                workdir = str(Path(args[i]).expanduser().resolve())
+            elif args[i] == "--write":
+                write = True
+            else:
+                rest.append(args[i])
+            i += 1
+        pj = project_plan(" ".join(rest), workdir, write, cfg)
+        print("계획서 %s — %s (%d단계, 승인 대기)" % (pj["id"], pj["title"], len(pj["milestones"])))
+        for ms in pj["milestones"]:
+            print("  %d. %s" % (ms["n"], ms["spec"][:80]))
+        print("승인: gari project approve %s" % pj["id"])
+        return 0
+    if args and args[0] == "approve" and len(args) > 1:
+        pj = load_json(_proj_path(args[1]), {})
+        if not pj:
+            print("없는 프로젝트: %s" % args[1])
+            return 1
+        pj["status"] = "running"
+        project_log(pj, "승인 — 가동")
+        project_tick(cfg)
+        print("가동: %s — 1단계 파견됨. 진행은 10분 심장박동이 관리, 막히면 알림." % pj["title"])
+        return 0
+    if args and args[0] == "tick":
+        project_tick(cfg)
+        print("tick 완료")
+        return 0
+    if args and args[0] == "show" and len(args) > 1:
+        pj = load_json(_proj_path(args[1]), {})
+        print(json.dumps(pj, ensure_ascii=False, indent=1)[:3000])
+        return 0
+    found = False
+    for pf in sorted(PROJECTS_DIR.glob("p-*.json")):
+        pj = load_json(pf, {})
+        done = len([m for m in pj.get("milestones", []) if m["status"] == "done"])
+        print("%s [%s] %s — %d/%d단계" % (pj.get("id"), pj.get("status"), pj.get("title"),
+                                        done, len(pj.get("milestones", []))))
+        found = True
+    if not found:
+        print("진행 중인 프로젝트 없음. 시작: gari project new \"<목표>\" --in <폴더> [--write]")
+    return 0
+
+
 def cmd_backfill(args):
     """gari backfill [--dry] — 전량 수집 전환(2026-07-06) 이전의 과거 대화 소급 증류.
     개인 프로젝트(구 수집 범위)는 그간 정상 수집됐으므로 제외 — 나머지(회사 등)를 처음부터."""
@@ -2682,7 +2951,7 @@ def main():
         "sweep": cmd_sweep, "report": cmd_report, "brief": cmd_brief,
         "status": cmd_status, "enqueue": cmd_enqueue, "done": cmd_done,
         "resolve": cmd_resolve, "log": cmd_log,
-        "ask": cmd_ask, "do": cmd_do, "pet": cmd_pet, "hud": cmd_hud, "weekly": cmd_weekly, "grade": cmd_grade, "chat": cmd_chat, "cost": cmd_cost, "doctor": cmd_doctor, "init": cmd_init, "wiki": cmd_wiki, "triage": cmd_triage, "snooze": cmd_snooze, "backfill": cmd_backfill,
+        "ask": cmd_ask, "do": cmd_do, "pet": cmd_pet, "hud": cmd_hud, "weekly": cmd_weekly, "grade": cmd_grade, "chat": cmd_chat, "cost": cmd_cost, "doctor": cmd_doctor, "init": cmd_init, "wiki": cmd_wiki, "triage": cmd_triage, "snooze": cmd_snooze, "backfill": cmd_backfill, "project": cmd_project,
     }
     args = sys.argv[1:]
     if not args or args[0] not in cmds:

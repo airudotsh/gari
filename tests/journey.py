@@ -25,7 +25,7 @@ def ask(q, new=True, timeout=420):
 
 COMMON_BAD = [
     (r"권한.{0,6}(승인|필요)", "권한 환각"),
-    (r"\[(깊은사고|일반질문|파견|기록|해소|지시)[:\]]", "마커 잔재 노출"),
+    (r"\[(깊은사고|일반질문|파견|프로젝트|기록|해소|지시)[:\]]", "마커 잔재 노출"),
     (r"(?:GariPet\.m|gari\.py):\d+", "코드 좌표 노출"),
 ]
 
@@ -108,6 +108,23 @@ def main():
             time.sleep(5)
         grade("C2-3 실물 생성", "hello.txt 생성됨" if made else "미생성", 0,
               must=[r"생성됨"] if made else [r"^$"])
+
+    # ── C4. 큰일 접수 분기 (프로젝트 PM) — 계획서까지만, 결재는 안 함 ──
+    a, s = ask("tests/pm-battery 폴더에다가: 먼저 폴더 구조를 조사해서 목록을 만들고, 그걸 바탕으로 설명 문서를 쓰고, 마지막에 요약본을 만들어줘")
+    grade("C4 단계 의존 일감→계획서 분기", a, s, must=[r"(계획서|단계)"], must_not=[r"이렇게 파견할까요"])
+    for pf in (Path.home() / "gari" / "store" / "projects").glob("p-*.json"):
+        pj = json.loads(pf.read_text(encoding="utf-8"))
+        if pj.get("status") == "awaiting_approval" and "pm-battery" in json.dumps(pj, ensure_ascii=False):
+            pf.unlink()  # 시험 초안은 결재 오발 방지 위해 즉시 소각
+    chats = sorted((Path.home() / "gari" / "store" / "chats").glob("*.jsonl"),
+                   key=lambda f: f.stat().st_mtime)
+    if chats:
+        lines = chats[-1].read_text(encoding="utf-8").splitlines()
+        meta = json.loads(lines[0])
+        if meta.get("pending_project"):
+            meta["pending_project"] = None
+            lines[0] = json.dumps(meta, ensure_ascii=False)
+            chats[-1].write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     # ── D. 파이프라인 위생 ──
     g_cards = g.read_cards_all()
