@@ -139,15 +139,18 @@ static int sheetRowFor(GariMood m) {
 // 메뉴바 없는 앱의 표준 편집 단축키 복원 — ⌘C/V/X/A/Z가 퍼스트리스폰더로 흐르게
 - (BOOL)performKeyEquivalent:(NSEvent *)e {
     if (e.modifierFlags & NSEventModifierFlagCommand) {
-        NSString *k = e.charactersIgnoringModifiers.lowercaseString;
+        // 물리 키코드로 판별 — 한글 자판에서는 ⌘V의 charactersIgnoringModifiers가
+        // "v"가 아니라 "ㅍ"로 와서 문자 비교가 통째로 빗나간다 (영문 자판에서만 통과)
         SEL sel = NULL;
-        if ([k isEqualToString:@"c"]) sel = @selector(copy:);
-        else if ([k isEqualToString:@"v"]) sel = @selector(paste:);
-        else if ([k isEqualToString:@"x"]) sel = @selector(cut:);
-        else if ([k isEqualToString:@"a"]) sel = @selector(selectAll:);
-        else if ([k isEqualToString:@"z"])
-            sel = (e.modifierFlags & NSEventModifierFlagShift)
-                ? NSSelectorFromString(@"redo:") : NSSelectorFromString(@"undo:");
+        switch (e.keyCode) {
+            case 8: sel = @selector(copy:); break;       // C
+            case 9: sel = @selector(paste:); break;      // V
+            case 7: sel = @selector(cut:); break;        // X
+            case 0: sel = @selector(selectAll:); break;  // A
+            case 6: sel = (e.modifierFlags & NSEventModifierFlagShift)
+                        ? NSSelectorFromString(@"redo:")
+                        : NSSelectorFromString(@"undo:"); break;  // Z
+        }
         if (sel && [NSApp sendAction:sel to:nil from:self]) return YES;
     }
     return [super performKeyEquivalent:e];
