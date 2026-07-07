@@ -116,7 +116,8 @@ def append_cards(cards):
 PROJECT_ALIASES = {"review-board": "review-board", "review-board": "review-board",
                    "review-board": "review-board", "sound-library": "sound-library",
                    "sound-library": "sound-library", "젤리피시": "jellyfish",
-                   "뇌클론": "brain-clone", "브레인클론": "brain-clone"}
+                   "뇌클론": "brain-clone", "브레인클론": "brain-clone",
+                   "video-analyst": "video-analyst", "video-analyst": "video-analyst"}
 
 
 def canonical_project(name):
@@ -1535,7 +1536,8 @@ def cmd_ask(args):
              "- 뇌 배치: 접수·기억답변·증류=haiku / 판단·멘토·일반지식·아침산출=sonnet.\n"
              "- 저장: ~/gari/store (카드 원장·대화·보고). 원문 대화는 각 CLI 폴더에 그대로, 가리는 읽기만.\n"
              "- 수집 범위: 전량 (2026-07-06 형님 지시). 그 이전 회사 기록은 소급분만.\n"
-             "- 수집된 프로젝트 (전체 명단 — 이 밖을 지어내지 마라): %s\n"
+             "- 위키 보유 프로젝트 (활동 이력 명단): %s. 이 밖의 이름을 지어내지 마라 — "
+             "단, 형님이 명단 밖 이름을 말하면 옛/휴면 프로젝트일 수 있으니 부정하지 말고 카드·문서에서 근거를 찾아 답하라.\n"
              "- 화면 지도 — 현황판 탭: ①오늘 카드(한 칸·멘토 훈련·참견·질문 — 아침 산출) ②프로젝트 방향판(위키 기반, 프로젝트별 정체+다음 결정) "
              "③처리함(형님 액션 인박스: ▶지금 이거 1건 / 끝난 듯·중복=가리 정리 제안으로 접힘 / ◇결재 / 채점 맞음·오발 / 실무 대기=파견 가능이라 접힘 / 그 외 미결) "
              "④오늘 기록 1줄. 대화 탭: 세션 목록·말풍선 스레드. 행 클릭=맥락 질문, 완료/나중에 버튼.") % (
