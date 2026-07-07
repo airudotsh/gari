@@ -2215,16 +2215,18 @@ def regenerate_wikis(cfg, force=False):
         prompt = ("%s 너는 가리 — 프로젝트 위키 사서다. 아래 사건 일지(카드)로 '%s' 프로젝트의 "
                   "**현재 상태 문서**를 작성하라. 규칙: 모순되면 최신·정정(correction)이 이긴다. "
                   "일지에 없는 것 지어내기 금지. 이 문서는 답변 뇌가 읽는다 — 장식 없이 사실만.\n"
+                  "너의 출력 텍스트가 곧 문서다 — 파일 저장은 시스템이 한다. 권한·승인·저장 언급 절대 금지, "
+                  "'# %s'로 시작하는 마크다운 본문만 출력하라.\n"
                   "형식 (마크다운):\n# %s\n**정체**: 한 줄\n"
                   "**존재 이유 (누가 언제 왜 쓰나)**: 한두 줄 — 일지에 근거가 없으면 정확히 \"미정의 — 카드에 사용자·문제 정의 없음\"이라고 써라\n"
                   "**성공 기준**: 한 줄 — 근거 없으면 \"미정의\"\n"
                   "**현재 상태**: 2~3줄\n"
                   "**유효한 결정** (최신 기준): 목록\n**열린 미결**: 목록\n**최근 흐름**: 3줄 이내\n\n"
                   "=== 사건 일지 (%d장) ===\n%s") % (
-            DISTILL_MARKER, name, name, len(cs), "\n".join(lines))
+            DISTILL_MARKER, name, name, name, len(cs), "\n".join(lines))
         text, rc = run_claude(prompt, cfg["ask_fallback_model"], cfg, "wiki",
                               timeout=cfg["do_timeout_sec"])
-        if rc == 0 and text:
+        if rc == 0 and text and text.lstrip().startswith("#") and "권한" not in text[:200]:
             (WIKI_DIR / (name + ".md")).write_text(
                 text + "\n\n---\n갱신: %s · 근거 카드 %d장\n" % (now_iso()[:16], len(cs)),
                 encoding="utf-8")
