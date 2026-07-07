@@ -406,6 +406,14 @@ def distill(turns, tool, project, session, burst_id, cfg):
         DISTILL_MARKER, prompt, extra, tool, project or "?", blob)
     out, rc = run_claude(full, cfg["distill_model"], cfg, "distill",
                          timeout=cfg["distill_timeout_sec"])
+    if (rc != 0 or not out) and Path(cfg.get("gjc_bin", "/nonexistent")).exists():
+        # 공급선 이중화: 클로드 불능이어도 기억 적재는 멈추지 않는다
+        rg = subprocess.run([cfg["gjc_bin"], "-p", "--no-session", "--no-tools", full],
+                            capture_output=True, text=True,
+                            timeout=cfg["distill_timeout_sec"])
+        if rg.returncode == 0 and rg.stdout.strip():
+            out, rc = rg.stdout.strip(), 0
+            metric("distill_fallback_gjc")
     if rc != 0 or not out:
         raise RuntimeError("증류 호출 실패 rc=%s" % rc)
     # 모델이 코드펜스로 감싸는 경우 벗긴다
@@ -690,6 +698,7 @@ def rebuild_briefing(cfg):
         lines.append("(전할 것 없음 — 조용한 게 정상)")
     lines.append("과거 맥락 질문('어제/아까/지난번/하던 거')이 나오면 ~/gari/store/cards/ 를 검색할 것.")
     BRIEFING_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    metric("brief_served")   # 세션 하나가 재설명 대신 브리핑을 받음
 
 
 def _proj_short(card):
@@ -840,6 +849,18 @@ def cmd_report(args):
     except (RuntimeError, OSError) as e:
         report += "\n## 위키 갱신\n\n- 실패: %s\n" % str(e)[:100]
 
+    # 가리가 어제 대신 한 일 — 측정 루프의 표면 (기준선: 재설명 없이 굴러간 양)
+    ms = metrics_summary(1)
+    if ms:
+        repeat_y = len([c for c in read_cards(1) if c.get("type") == "repeat"])
+        report += ("\n## 가리가 어제 대신 한 일\n\n"
+                   "- 세션 브리핑 주입(재설명 대체): %d회\n"
+                   "- 질문 응답: %d건 (심층 논의 %d · 일반/웹 %d)\n"
+                   "- 자가 정정: %d건 · 감지된 재설명(repeat) 카드: %d건\n") % (
+            ms.get("brief_served", 0), ms.get("ask_answered", 0),
+            ms.get("ask_deep", 0), ms.get("ask_general", 0),
+            ms.get("self_correct", 0), repeat_y)
+
     # 멘토 리뷰 — 직업 이상향 기준의 거울 (2026-07-06 사용자: "멘토처럼 느낄 수 있게")
     try:
         mentor = compose_mentor_review(cfg)
@@ -882,6 +903,16 @@ def cmd_weekly(args):
     if not cards:
         notify("가리 — 주간 보고", "형님, 이번 주는 적재된 대화가 없습니다.", cfg)
         return 0
+
+    # 번복 신호: 같은 계열 재설명 3회+ → 인터뷰 제안 (헌법 규칙의 자동화)
+    from collections import Counter
+    rep_keys = Counter(c["text"][:24] for c in cards if c.get("type") == "repeat")
+    interview_flags = ["- 같은 재설명 %d회: \"%s…\" — 결정 재료 부족 신호. 5분 인터뷰로 근본 원인을 잡을까요?" % (n, k)
+                       for k, n in rep_keys.most_common(3) if n >= 3]
+    import random
+    audit_lines = ["- [%s/%s] %s" % (c["tool"], _proj_short(c), c["text"][:70])
+                   for c in random.sample(cards, min(3, len(cards)))]
+    wk_metrics = metrics_summary(7)
     # (해소) 카드는 미결 정리용 북키핑 — 결정 목록에선 제외
     by = lambda t: [c for c in cards
                     if c["type"] == t and not c["text"].startswith("(해소)")]
@@ -931,6 +962,15 @@ def cmd_weekly(args):
         correction_count=len(by("correction")), corrections=fmt(by("correction"), cap=20),
         wins=fmt(by("win"), empty="- (기록된 연승 없음)"),
         shadow_summary=shadow_summary, next_step=next_step)
+    report += "\n## 이끌림 신호 (주간 실측)\n\n"
+    report += ("- 가리가 대신 한 일: 브리핑 %d회 · 응답 %d건 (심층 %d) · 자가 정정 %d건\n" % (
+        wk_metrics.get("brief_served", 0), wk_metrics.get("ask_answered", 0),
+        wk_metrics.get("ask_deep", 0), wk_metrics.get("self_correct", 0)))
+    if interview_flags:
+        report += "\n**번복·재설명 패턴 (인터뷰 후보)**\n" + "\n".join(interview_flags) + "\n"
+    report += ("\n**기억 감사 표본 3장** — 원문과 다르게 적힌 게 보이면 알려주세요 (정정 카드로 덮습니다)\n"
+               + "\n".join(audit_lines) + "\n")
+    report = personalize(report, cfg)
     out = REPORTS_DIR / ("weekly-%s.md" % week_label)
     out.write_text(report, encoding="utf-8")
     notify("가리 — 주간 종합보고", "형님, %s 주간 정리 나왔습니다. `gari weekly`로 확인." % week_label, cfg)
@@ -1143,6 +1183,9 @@ def load_chat_history(cfg, sid):
 
 
 def append_chat(sid, question, answer):
+    meta, turns = chat_read(sid)
+    if not turns and meta.get("title") in ("새 대화", "대화", "", None):
+        _chat_set_meta(sid, "title", question[:40])   # 첫 질문 = 제목
     with open(_chat_path(sid), "a", encoding="utf-8") as f:
         f.write(json.dumps({"ts": now_iso(), "q": question, "a": answer},
                            ensure_ascii=False) + "\n")
@@ -1209,6 +1252,33 @@ def load_prefs():
         return ""
     return "=== 형님의 지속 지시 (모든 답과 산출에서 반드시 따를 것) ===\n" + "\n".join(lines[-30:])
 ASK_STATUS = STORE / "ask-status.txt"
+METRICS_LOG = STORE / "metrics.jsonl"
+
+
+def metric(kind, note=""):
+    """가치 계측 이벤트 — 아침 보고의 '가리가 어제 대신 한 일'과 주간 추세의 원자료."""
+    try:
+        with open(METRICS_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": now_iso(), "kind": kind, "note": note[:80]},
+                               ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def metrics_summary(days=1):
+    if not METRICS_LOG.exists():
+        return {}
+    cutoff = (datetime.now().astimezone() - timedelta(days=days)).isoformat()
+    from collections import Counter
+    cnt = Counter()
+    for line in METRICS_LOG.read_text(encoding="utf-8").splitlines():
+        try:
+            d = json.loads(line)
+            if d["ts"] >= cutoff:
+                cnt[d["kind"]] += 1
+        except (json.JSONDecodeError, KeyError):
+            continue
+    return dict(cnt)
 
 
 def set_ask_status(text):
@@ -1428,6 +1498,9 @@ def cmd_ask(args):
     if deep_session and any(w in question for w in ("주제 바꿔", "새 주제", "가볍게", "그만하자")):
         _chat_set_meta(sid, "deep", None)
         deep_session = False
+    attach_paths = [m.group(1).strip() for m in re.finditer(r"\[첨부:\s*([^\]]+)\]", question)]
+    attach_paths = [a for a in attach_paths if Path(a).expanduser().exists()]
+
     cards = read_cards(cfg["briefing_days"])
     lines = ["(%s) %s [%s/%s] %s: %s" % (c.get("id", "-"), c["ts"][:16], c["tool"],
                                          _proj_short(c), c["type"], c["text"])
@@ -1479,6 +1552,28 @@ def cmd_ask(args):
         # 논의 세션: 접수는 거치되, 판단 계열이면 주저 없이 심층으로 보내라는 편향만 부여
         persona += ("\n\n[지금 이 세션은 깊은 논의 중] 직전 주제의 전략·판단 후속이면 주저 없이 [깊은사고]를 출력하라. "
                     "단 가벼운 사실·설명 질문이면 네가 즉답하라 — 심층은 느리고 비싸다.")
+    if attach_paths:
+        # 첨부가 있으면 곧장 비전 경로 — Read 도구가 이미지를 직접 본다
+        metric("ask_attach", question[:60])
+        set_ask_status("첨부 확인 중 — %d개 파일" % len(attach_paths))
+        clean_q = re.sub(r"\[첨부:[^\]]+\]", "", question).strip() or "이 첨부를 확인해줘"
+        att_prompt = ("%s 너는 \"가리\" — 형님(아이루)의 솔직한 부하이자 PM이다. "
+                      "아래 첨부 파일(이미지 포함)을 **Read 도구로 반드시 열어 직접 본 뒤** 답하라. "
+                      "결론 먼저, 제품 언어로. 호칭 형님.\n\n첨부:\n%s\n\n"
+                      "=== 이전 문답 ===\n%s\n\n=== 형님의 질문 ===\n%s") % (
+            DISTILL_MARKER, "\n".join("- " + a for a in attach_paths),
+            hist_txt or "(첫 대화)", clean_q)
+        answer, rc = run_claude_stream(att_prompt, cfg["ask_fallback_model"], cfg, "ask-attach",
+                                       "Read,Glob,Grep,WebSearch,WebFetch",
+                                       timeout=cfg["do_timeout_sec"], cwd=str(Path.home()))
+        if not answer:
+            answer = "첨부 확인에 실패했습니다 — 파일 형식을 확인해주세요"
+        metric("ask_answered", question[:60])
+        append_chat(sid, question, answer)
+        set_ask_status("")
+        print(answer)
+        return 0
+
     set_ask_status("기억 대조 중 — 최근 3일 카드 %d장" % len(lines))
     if tool == "gjc":
         r = subprocess.run([cfg["gjc_bin"], "-p", "--no-session", "--no-tools", full],
@@ -1534,6 +1629,7 @@ def cmd_ask(args):
         deep_prompt += wiki_block
         if prefs:
             deep_prompt += "\n\n" + prefs
+        metric("ask_deep", question[:60])
         answer, rc = run_claude_stream(deep_prompt, cfg["ask_fallback_model"], cfg, "ask-deep",
                                        "Read,Glob,Grep,WebSearch,WebFetch",
                                        timeout=cfg["do_timeout_sec"])
@@ -1547,6 +1643,7 @@ def cmd_ask(args):
                "답 끝에, 형님이 놓친 게 보이면 «참견 —» 한 줄을 붙여라 (없으면 생략).\n\n%s\n\n"
                "=== 이전 문답 ===\n%s\n\n=== 형님의 질문 ===\n%s") % (
             DISTILL_MARKER, lenses, hist_txt or "(첫 대화)", question)
+        metric("ask_general", question[:60])
         answer, rc = run_claude_stream(gen, cfg["ask_fallback_model"], cfg, "ask-general",
                                        "WebSearch,WebFetch", timeout=cfg["do_timeout_sec"])
         if not answer:
@@ -1574,6 +1671,7 @@ def cmd_ask(args):
         tgt = next((c for c in open_pendings(read_cards_all())
                     if c.get("id") == rec.get("id")), None)
         if tgt and rec.get("evidence"):
+            metric("self_correct", tgt["text"][:60])
             append_cards([{"id": hashlib.md5(("자가해소" + tgt["id"]).encode()).hexdigest()[:8],
                            "ts": now_iso(), "tool": "gari-chat", "project": tgt.get("project"),
                            "session": sid, "burst": "self-correct",
@@ -1616,6 +1714,7 @@ def cmd_ask(args):
             pass
 
     set_ask_status("")
+    metric("ask_answered", question[:60])
     append_chat(sid, question, answer)   # 대화 이어짐의 원장
     print(answer)
     return 0
@@ -2259,7 +2358,9 @@ def cmd_doctor(args):
     cb = cfg.get("claude_bin", "")
     check("Claude CLI 존재 (%s)" % cb, bool(cb) and Path(cb).exists(),
           "https://claude.com/claude-code 설치 후 다시")
-    if Path(cb).exists() if cb else False:
+    if "--fast" in args:
+        print(" — 실호출 검사 생략 (--fast). 전체 검사: gari doctor")
+    elif Path(cb).exists() if cb else False:
         set_ask_status("")
         txt, rc = run_claude("pong 이라고만 답해", cfg["ask_model"], cfg, "doctor", timeout=60)
         check("Claude 로그인·응답 (실호출)", rc == 0 and bool(txt),

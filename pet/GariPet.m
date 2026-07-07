@@ -343,6 +343,45 @@ static NSView *hudRowCard(CGFloat width) {
 @property BOOL asking;
 @end
 
+@interface ChatInputView : NSTextView
+@end
+
+@implementation ChatInputView
+- (void)paste:(id)sender {
+    NSPasteboard *pb = NSPasteboard.generalPasteboard;
+    NSImage *img = nil;
+    // 파일 복사(피인더) 우선, 그다음 화면캡처류 비트맵
+    NSArray *urls = [pb readObjectsForClasses:@[NSURL.class]
+                                      options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+    for (NSURL *u in urls) {
+        NSString *ext = u.pathExtension.lowercaseString;
+        if ([@[@"png", @"jpg", @"jpeg", @"gif", @"webp"] containsObject:ext]) {
+            [self insertText:[NSString stringWithFormat:@"[첨부: %@] ", u.path]
+            replacementRange:self.selectedRange];
+            return;
+        }
+    }
+    if ([pb canReadObjectForClasses:@[NSImage.class] options:@{}])
+        img = [[NSImage alloc] initWithPasteboard:pb];
+    if (img) {
+        NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithData:img.TIFFRepresentation];
+        NSData *png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+        NSDateFormatter *df = [NSDateFormatter new];
+        df.dateFormat = @"yyyyMMdd-HHmmss";
+        NSString *path = [GariStateReader gariPath:
+            [NSString stringWithFormat:@"store/attach/%@.png", [df stringFromDate:NSDate.date]]];
+        [NSFileManager.defaultManager createDirectoryAtPath:path.stringByDeletingLastPathComponent
+            withIntermediateDirectories:YES attributes:nil error:nil];
+        if ([png writeToFile:path atomically:YES]) {
+            [self insertText:[NSString stringWithFormat:@"[첨부: %@] ", path]
+            replacementRange:self.selectedRange];
+            return;
+        }
+    }
+    [super paste:sender];
+}
+@end
+
 @interface ResizeGrip : NSView
 @property (weak) NSWindow *win;
 @property (copy) void (^onResizeEnd)(void);
@@ -906,7 +945,7 @@ static NSString *hudTimeShort(NSString *iso) {
     inSv.hasVerticalScroller = YES;
     inSv.autohidesScrollers = YES;
     inSv.borderType = NSNoBorder;
-    NSTextView *tv = [[NSTextView alloc] initWithFrame:
+    ChatInputView *tv = [[ChatInputView alloc] initWithFrame:
         NSMakeRect(0, 0, inSv.frame.size.width, inSv.frame.size.height)];
     tv.richText = NO;
     tv.drawsBackground = NO;
@@ -1438,9 +1477,44 @@ static NSString *hudTimeShort(NSString *iso) {
 
     // 말풍선 스레드
     NSArray *thread = [chat[@"thread"] isKindOfClass:NSArray.class] ? chat[@"thread"] : @[];
-    void (^bubble)(NSString *, BOOL) = ^(NSString *text, BOOL mine) {
-        if (!text.length) return;
+    void (^bubble)(NSString *, BOOL) = ^(NSString *rawText, BOOL mine) {
+        if (!rawText.length) return;
         CGFloat maxW = contentW * 0.82;
+        // 로컬 이미지 추출: ![..](path) / [첨부: path]
+        NSMutableArray *imgPaths = [NSMutableArray array];
+        NSString *text = rawText;
+        for (NSString *pat in @[@"!\\[[^\\]]*\\]\\(([^)]+)\\)", @"\\[첨부:\\s*([^\\]]+)\\]"]) {
+            NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:pat options:0 error:nil];
+            for (NSTextCheckingResult *m in [re matchesInString:text options:0
+                                                           range:NSMakeRange(0, text.length)]) {
+                NSString *pth = [[text substringWithRange:[m rangeAtIndex:1]]
+                    stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+                pth = pth.stringByExpandingTildeInPath;
+                if ([NSFileManager.defaultManager fileExistsAtPath:pth]) [imgPaths addObject:pth];
+            }
+            text = [re stringByReplacingMatchesInString:text options:0
+                                                  range:NSMakeRange(0, text.length) withTemplate:@""];
+        }
+        text = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        void (^imgBubbles)(void) = ^{
+            for (NSString *pth in imgPaths) {
+                NSImage *im = [[NSImage alloc] initWithContentsOfFile:pth];
+                if (!im) continue;
+                CGFloat iw = MIN(maxW * 0.85, im.size.width);
+                CGFloat ih = im.size.height * (iw / MAX(1, im.size.width));
+                ih = MIN(ih, 260);
+                iw = im.size.width * (ih / MAX(1, im.size.height));
+                NSImageView *iv = [NSImageView imageViewWithImage:im];
+                iv.imageScaling = NSImageScaleProportionallyUpOrDown;
+                iv.wantsLayer = YES;
+                iv.layer.cornerRadius = 10;
+                iv.layer.masksToBounds = YES;
+                iv.frame = NSMakeRect(mine ? pad + contentW - iw : pad, y, iw, ih);
+                [doc addSubview:iv];
+                y += ih + 7;
+            }
+        };
+        if (!text.length) { imgBubbles(); return; }   // 이미지만 있는 메시지
         NSTextView *l = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, maxW - 32, 10)];
         l.editable = NO;
         l.selectable = YES;                    // 링크 클릭·본문 복사 가능
@@ -1479,6 +1553,7 @@ static NSString *hudTimeShort(NSString *iso) {
         [b addSubview:l];
         [doc addSubview:b];
         y += bh + 7;
+        imgBubbles();
     };
     if (!thread.count && !self.asking) {
         NSTextField *empty = hudLabel(@"무엇이든 물어보십시오, 형님 — 기억·문서·일반 지식·작업 파견까지.",
@@ -2059,7 +2134,7 @@ static void renderSnapshots(NSString *outDir) {
         @"chat": @{@"session": @"9d89a816", @"title": @"펫 소리 논의",
                    @"sessions": @[@{@"id": @"9d89a816", @"title": @"펫 소리 논의"}],
                    @"thread": @[@{@"q": @"D+1 로그 확정이 무슨 내용이야?", @"a": @"Brain-Clone 메모리 시스템이 여러 세션에 자동 반영되는 구조와 관련된 미결입니다, 형님.\n\n상황: Claude-mem으로 만든 기억들(현재 404개)을 분류·연결하는 색인을 프로젝트 세션들에 자동 제공하고 있거든요. 어제 하루에 실행된 140개 세션이 이 색인을 제대로 받았는지를 서버 기록으로 확인해야 한다는 뜻입니다.\n\n왜 필요한가: 색인 주입 시스템이 실제로 작동하는지 검증하지 않으면, 지금까지 정리한 기억들이 실제 대화에서 쓰이지 못할 수도 있거든요.\n\n«참견 — 이 확인이 D+1 구간(어제 다음날)을 지정한 이유가 뭔가요? 어제/오늘의 로그로는 부족한 건가요, 아니면 시간차 효과를 재는 건가요?"},
-                                @{@"q": @"그거 언제 정했지?", @"a": @"## 확정 시점\n**2026-07-05 밤**에 정하셨습니다.\n- 해소하려면 `gari resolve ab12cd34` 실행\n- 참고: https://gari.local/cards\n\n«참견 — 이 결정의 검증 계획이 아직 없습니다.", @"ts": @"22:40"}]},
+                                @{@"q": @"그거 언제 정했지?", @"a": @"![펫](~/gari/docs/img/gari-pet.png)\n## 확정 시점\n**2026-07-05 밤**에 정하셨습니다.\n- 해소하려면 `gari resolve ab12cd34` 실행\n- 참고: https://gari.local/cards\n\n«참견 — 이 결정의 검증 계획이 아직 없습니다.", @"ts": @"22:40"}]},
         @"shadow": @[@{@"id": @"f1e9e032", @"text": @"같은 지시 반복 감지: 펫 크기 조정 요청 3회", @"quote": @""}],
         @"approvals": @[@"아침 보고 시각 확정 — 현재 09:00 (config.json report_hour)"],
         @"pendings": @[@{@"idx": @0, @"project": @"brain-clone", @"id": @"ab12cd34",
