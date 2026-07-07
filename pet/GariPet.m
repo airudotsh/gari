@@ -977,17 +977,19 @@ static NSString *hudTimeShort(NSString *iso) {
     tv.textContainer.widthTracksTextView = YES;
     tv.delegate = (id<NSTextViewDelegate>)self;
     inSv.documentView = tv;
-    [inputWrap addSubview:inSv];
-    self.hudInputScroll = inSv;
-    self.hudInput = tv;
-
     NSTextField *ph = hudLabel(@"가리에게 물어보기…", [NSFont systemFontOfSize:13],
                                [NSColor colorWithCalibratedWhite:0.48 alpha:1], 1,
                                inputWrap.frame.size.width - 24);
     ph.frame = NSMakeRect(13, (wrapH - ph.frame.size.height) / 2,
                           inputWrap.frame.size.width - 24, ph.frame.size.height);
-    [inputWrap addSubview:ph];
+    [inputWrap addSubview:ph];            // 라벨은 뒤 —
+    [inputWrap addSubview:inSv];          // 입력기가 위 (클릭 방패 제거)
+    self.hudInputScroll = inSv;
+    self.hudInput = tv;
     self.hudPlaceholder = ph;
+    NSClickGestureRecognizer *wrapTap = [[NSClickGestureRecognizer alloc]
+        initWithTarget:self action:@selector(focusInput:)];
+    [inputWrap addGestureRecognizer:wrapTap];   // 상자 여백을 눌러도 포커스
 
     return card;
 }
@@ -1051,6 +1053,10 @@ static NSString *hudTimeShort(NSString *iso) {
     self.hudGrip.win = self.hudWindow;
     __weak typeof(self) weakSelf = self;
     self.hudGrip.onResizeEnd = ^{ [weakSelf hudResizeEnded]; };
+}
+
+- (void)focusInput:(id)sender {
+    [self.hudWindow makeFirstResponder:self.hudInput];
 }
 
 - (void)tabTapped:(NSButton *)btn {
