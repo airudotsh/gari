@@ -721,6 +721,14 @@ def _sweep_inner(args, cfg):
         collect_pulse(cfg)  # git 실측 — 말없이 코드로만 진행된 일도 본다
     except Exception as e:
         errors.append("pulse: %s" % e)
+    try:
+        cron_due(cfg)  # 사용자 정의 예약
+    except Exception as e:
+        errors.append("cron: %s" % e)
+    try:
+        budget_check(cfg)  # 월 예산 게이트
+    except Exception as e:
+        errors.append("budget: %s" % e)
     if errors:
         print("[sweep 오류]\n" + "\n".join(errors), file=sys.stderr)
     print("sweep 완료: 닫은 묶음 %d, 오류 %d" % (closed, len(errors)))
@@ -1093,6 +1101,7 @@ def compose_reflection(cards, cfg):
               " 근거 없는 일반론 금지. 각 후보는 정확히 두 줄:\n"
               "N) 진단 한 줄 (어떤 기록에서 왜)\n"
               "   반영 문구: \"앞으로 <행동 규칙>해줘\"\n"
+              "   (규칙이 특정 상황 전용이면 반영 문구 대신: 스킬 승격 — gari skill new <이름> \"trigger: <키워드들>\")\n"
               "규칙 후보가 안 뽑히면 '- 규칙화할 패턴 없음'이라고만 써라.") % (
         DISTILL_MARKER,
         "\n".join("- " + t for t in corr) or "- (없음)",
@@ -1228,6 +1237,184 @@ def cmd_merge(args):
                    "ts": now_iso(), "tool": "gari-do", "project": orig.name,
                    "session": name, "burst": name, "type": "win",
                    "text": "(합류) 격리 파견 산출 %s를 %s에 머지" % (name, orig.name)}])
+    return 0
+
+
+CRONS_PATH = STORE / "crons.jsonl"
+
+
+def budget_check(cfg):
+    """월 LLM 비용이 예산을 넘으면 경고 1회 (외부 사용자 제품 원칙의 자기 적용 — 비용 게이트)."""
+    limit = cfg.get("monthly_budget_usd")
+    if not limit or not USAGE_LOG.exists():
+        return
+    month = datetime.now().strftime("%Y-%m")
+    total = 0.0
+    for line in USAGE_LOG.read_text(encoding="utf-8").splitlines():
+        try:
+            r = json.loads(line)
+            if str(r.get("ts", "")).startswith(month) and r.get("cost_usd"):
+                total += r["cost_usd"]
+        except json.JSONDecodeError:
+            continue
+    flag = STORE / (".budget-warned-" + month)
+    if total >= limit and not flag.exists():
+        flag.touch()
+        notify("가리 — 비용 게이트", "이번 달 LLM 비용 $%.1f — 예산 $%.0f 초과. gari cost로 내역 확인." % (total, limit),
+               cfg, urgent=True)
+
+
+def cron_due(cfg):
+    """사용자 정의 예약 실행 (OpenClaw HEARTBEAT tasks 차용) — 스윕마다 기한 지난 것 실행.
+    엔트리: {"id", "every_h" 또는 "daily_at": "HH:MM", "prompt", "last_run"}. 산출은 알림+카드."""
+    if not CRONS_PATH.exists():
+        return
+    rows, changed = [], False
+    now = datetime.now().astimezone()
+    for line in CRONS_PATH.read_text(encoding="utf-8").splitlines():
+        try:
+            c = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        due = False
+        last = c.get("last_run", "")
+        if c.get("every_h"):
+            due = not last or (now - datetime.fromisoformat(last)).total_seconds() >= c["every_h"] * 3600
+        elif c.get("daily_at"):
+            due = now.strftime("%H:%M") >= c["daily_at"] and last[:10] != now.strftime("%Y-%m-%d")
+        if due:
+            text, rc, _b = run_brain("%s 예약 임무 (간결히, 결론 먼저): %s" % (DISTILL_MARKER, c["prompt"]),
+                                     cfg["ask_fallback_model"], cfg, "cron",
+                                     timeout=300, max_out=3000,
+                                     chain=cfg.get("brain_chain", ["claude"]))
+            if rc == 0 and text:
+                notify("가리 예약 — %s" % c.get("id", "")[:20], text[:120], cfg)
+                append_cards([{"id": hashlib.md5(("cron" + c.get("id", "") + now.isoformat()).encode()).hexdigest()[:8],
+                               "ts": now_iso(), "tool": "gari-cron", "project": "gari",
+                               "session": c.get("id", ""), "burst": "cron", "type": "win",
+                               "text": "(예약 실행) %s → %s" % (c["prompt"][:60], text[:100])}])
+            c["last_run"] = now_iso()
+            changed = True
+        rows.append(c)
+    if changed:
+        CRONS_PATH.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n",
+                              encoding="utf-8")
+
+
+def cmd_cron(args):
+    """gari cron — 목록 / add "<프롬프트>" --every 24h|--at HH:MM / rm <id>"""
+    if args and args[0] == "add" and len(args) >= 2:
+        prompt_words, every_h, daily_at = [], None, None
+        i = 1
+        while i < len(args):
+            if args[i] == "--every":
+                i += 1
+                every_h = float(args[i].rstrip("h"))
+            elif args[i] == "--at":
+                i += 1
+                daily_at = args[i]
+            else:
+                prompt_words.append(args[i])
+            i += 1
+        cid = hashlib.md5(" ".join(prompt_words).encode()).hexdigest()[:6]
+        entry = {"id": cid, "prompt": " ".join(prompt_words), "last_run": ""}
+        if every_h:
+            entry["every_h"] = every_h
+        else:
+            entry["daily_at"] = daily_at or "09:30"
+        with open(CRONS_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        print("예약 등록 %s — %s (%s)" % (cid, entry["prompt"][:50],
+              "매 %g시간" % every_h if every_h else "매일 " + entry["daily_at"]))
+        return 0
+    if args and args[0] == "rm" and len(args) > 1:
+        rows = [json.loads(l) for l in CRONS_PATH.read_text(encoding="utf-8").splitlines()] \
+            if CRONS_PATH.exists() else []
+        keep = [r for r in rows if r.get("id") != args[1]]
+        CRONS_PATH.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in keep)
+                              + ("\n" if keep else ""), encoding="utf-8")
+        print("제거: %s (%d→%d)" % (args[1], len(rows), len(keep)))
+        return 0
+    if CRONS_PATH.exists():
+        for l in CRONS_PATH.read_text(encoding="utf-8").splitlines():
+            c = json.loads(l)
+            print(" · %s %s — %s (마지막: %s)" % (c["id"],
+                  "매%g h" % c["every_h"] if c.get("every_h") else "매일 " + c.get("daily_at", "?"),
+                  c["prompt"][:50], c.get("last_run", "없음")[:16]))
+    else:
+        print('예약 없음. 등록: gari cron add "할 일" --every 24h 또는 --at 09:30 — 채팅에서 "매일 ~해줘"도 됨')
+    return 0
+
+
+def cmd_event(args):
+    """gari event "<텍스트>" — 외부 스크립트·시스템이 가리에게 사건을 밀어넣는 인바운드 관문.
+    카드로 적재돼 다음 트리아지·아침 보고에 자연 합류한다."""
+    if not args:
+        print('사용법: gari event "무슨 일이 있었는지 한 줄"')
+        return 1
+    text = " ".join(args)
+    append_cards([{"id": hashlib.md5(("evt" + text + now_iso()).encode()).hexdigest()[:8],
+                   "ts": now_iso(), "tool": "gari-event", "project": "inbox",
+                   "session": "", "burst": "event", "type": "pending",
+                   "text": "(외부 이벤트) " + text[:300]}])
+    print("접수 — 다음 정리 때 합류합니다.")
+    return 0
+
+
+def cmd_gateway(args):
+    """gari gateway — 텔레그램 채널 어댑터 (모바일 어댑터 v0, OpenClaw 게이트웨이 패턴의 최소형).
+    config telegram_token + telegram_chat_id(허용 목록) 설정 시 활성. 무토큰이면 설치 안내만.
+    보안: 허용된 chat_id 외 메시지는 응답 없이 기록만 (크레덴셜·개인 데이터 보호)."""
+    import urllib.request
+    import urllib.parse
+    cfg = load_config()
+    token = cfg.get("telegram_token") or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    allowed = str(cfg.get("telegram_chat_id", ""))
+    if not token:
+        print("텔레그램 토큰이 없습니다. 켜는 법 (1분):")
+        print(" 1. 텔레그램에서 @BotFather → /newbot → 토큰 복사")
+        print(" 2. config.json에 \"telegram_token\": \"<토큰>\" 추가")
+        print(" 3. 봇에게 아무 말 보내고 gari gateway 첫 실행 → 표시되는 chat_id를 \"telegram_chat_id\"에 등록")
+        print(" 4. 상시 구동: launchctl load ~/gari/launchd/com.airu.gari-gateway.plist")
+        return 1
+    api = "https://api.telegram.org/bot%s/" % token
+
+    def call(method, **params):
+        data = urllib.parse.urlencode(params).encode()
+        with urllib.request.urlopen(api + method, data=data, timeout=70) as r:
+            return json.loads(r.read().decode())
+
+    print("게이트웨이 가동 — 허용 chat_id: %s" % (allowed or "(미설정 — 수신 id를 표시만 합니다)"))
+    offset = 0
+    while True:
+        try:
+            upd = call("getUpdates", offset=offset, timeout=50)
+        except Exception as e:
+            print("폴링 오류(재시도): %s" % str(e)[:80], file=sys.stderr)
+            time.sleep(10)
+            continue
+        for u in upd.get("result", []):
+            offset = u["update_id"] + 1
+            msg = u.get("message") or {}
+            chat = str(msg.get("chat", {}).get("id", ""))
+            text = (msg.get("text") or "").strip()
+            if not text:
+                continue
+            if not allowed:
+                print("수신 chat_id=%s — config telegram_chat_id에 등록하면 응답 시작" % chat)
+                continue
+            if chat != allowed:
+                print("허용 외 chat_id=%s 무시" % chat, file=sys.stderr)
+                continue
+            metric("gateway_msg", text[:60])
+            r = subprocess.run([str(GARI_HOME / "bin" / "gari"), "ask", text],
+                               capture_output=True, text=True, timeout=600, env=CLAUDE_ENV)
+            reply = (r.stdout or "").strip() or "(응답 실패 — gari doctor 확인)"
+            for i in range(0, len(reply), 3800):
+                try:
+                    call("sendMessage", chat_id=chat, text=reply[i:i + 3800])
+                except Exception as e:
+                    print("발신 오류: %s" % str(e)[:80], file=sys.stderr)
     return 0
 
 
@@ -1606,6 +1793,63 @@ def cmd_chat(args):
 
 USAGE_LOG = STORE / "usage.jsonl"
 PREFS_PATH = STORE / "prefs.md"
+
+
+SKILLS_DIR = STORE / "skills"
+
+
+def load_skills(question):
+    """스킬 로드 (OpenClaw SKILL.md + Hermes 자동 승격 차용): store/skills/*.md 중
+    트리거 키워드가 질문에 걸리는 것만 프롬프트에 동봉. 스킬 = 첫 줄 'trigger: 쉼표,키워드' + 본문.
+    형님이 직접 쓰거나, 주간 반성의 규칙 후보가 승격되어 태어난다."""
+    if not SKILLS_DIR.exists():
+        return ""
+    hits = []
+    ql = question.lower()
+    for f in sorted(SKILLS_DIR.glob("*.md")):
+        try:
+            body = f.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        first, _, rest = body.partition("\n")
+        if first.lower().startswith("trigger:"):
+            trigs = [t.strip().lower() for t in first.split(":", 1)[1].split(",") if t.strip()]
+            if any(t in ql for t in trigs):
+                hits.append("[스킬: %s]\n%s" % (f.stem, rest.strip()[:1500]))
+        if len(hits) >= 2:   # 스킬 과적 방지 — 제일 먼저 걸린 2개만
+            break
+    return "\n\n".join(hits)
+
+
+def cmd_skill(args):
+    """gari skill — 목록 / gari skill new <이름> "trigger: 키워드들" — 뼈대 생성 / gari skill rm <이름>"""
+    SKILLS_DIR.mkdir(exist_ok=True)
+    if args and args[0] == "new" and len(args) >= 2:
+        name = args[1]
+        trig = args[2] if len(args) > 2 else "trigger: %s" % name
+        f = SKILLS_DIR / (name + ".md")
+        if f.exists():
+            print("이미 있음: %s" % f)
+            return 1
+        f.write_text(trig + "\n\n(여기에 이 상황에서 가리가 따를 방법을 쓴다)\n", encoding="utf-8")
+        print("스킬 뼈대 생성: %s — 본문을 채워주세요" % f)
+        return 0
+    if args and args[0] == "rm" and len(args) > 1:
+        f = SKILLS_DIR / (args[1] + ".md")
+        if f.exists():
+            f.unlink()
+            print("삭제: %s" % args[1])
+            return 0
+        print("없음: %s" % args[1])
+        return 1
+    found = False
+    for f in sorted(SKILLS_DIR.glob("*.md")):
+        first = f.read_text(encoding="utf-8").splitlines()[0] if f.stat().st_size else ""
+        print(" · %-24s %s" % (f.stem, first[:60]))
+        found = True
+    if not found:
+        print("스킬 없음. 생성: gari skill new <이름> \"trigger: 키워드1,키워드2\"")
+    return 0
 
 
 def load_prefs():
@@ -2113,6 +2357,9 @@ def cmd_ask(args):
     prefs = load_prefs()
     if prefs:
         lenses = lenses + "\n\n" + prefs
+    sk = load_skills(question)
+    if sk:
+        lenses = lenses + "\n\n" + sk
     gf = grade_feedback(pool)
     if gf:
         lenses = lenses + "\n\n" + gf
@@ -2130,7 +2377,9 @@ def cmd_ask(args):
         # 자기 구조 질문 고속차선 — 심층 금지, 사실표 즉답 (몇 초). 답 재료는 사실표라 카드는 최소만.
         lines = lines[-15:]
         persona += ("\n\n[고속차선] 이 질문은 가리 자기 구조·규칙에 대한 것이다. "
-                    "위 사실표와 화면 지도로 지금 즉답하라. [깊은사고]·[일반질문] 마커 출력 금지.")
+                    "위 사실표와 화면 지도로 지금 즉답하라. [깊은사고]·[일반질문] 마커 출력 금지. "
+                    "**카드와 사실표가 충돌하면 사실표가 이긴다** — 카드는 과거 논의의 스냅샷이라 "
+                    "이미 구현된 동작을 '미결'이라 말할 수 있다. 카드 ID는 답에 노출 금지.")
     elif deep_session:
         # 논의 세션: 접수는 거치되, 판단 계열이면 주저 없이 심층으로 보내라는 편향만 부여
         persona += ("\n\n[지금 이 세션은 깊은 논의 중] 직전 주제의 전략·판단 후속이면 주저 없이 [깊은사고]를 출력하라. "
@@ -2317,6 +2566,23 @@ def cmd_ask(args):
                 pj["title"], len(pj["milestones"]), steps, pj["acceptance"][:120])
         except Exception as e:
             answer += "\n\n(계획 수립에 실패했습니다: %s — 다시 요청해 주세요.)" % str(e)[:80]
+
+    # 예약 마커: [예약: {...}] → 크론 원장 등록
+    for cm in re.finditer(r'\[예약:\s*(\{.*?\})\s*\]', answer, re.S):
+        try:
+            cj = json.loads(cm.group(1))
+            if cj.get("prompt"):
+                entry = {"id": hashlib.md5(cj["prompt"].encode()).hexdigest()[:6],
+                         "prompt": cj["prompt"], "last_run": ""}
+                if cj.get("every_h"):
+                    entry["every_h"] = float(cj["every_h"])
+                else:
+                    entry["daily_at"] = cj.get("daily_at", "09:30")
+                with open(CRONS_PATH, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except (json.JSONDecodeError, ValueError):
+            pass
+        answer = answer.replace(cm.group(0), "").strip()
 
     # 파견 제안 마커: [파견: {"task":..,"dir":..,"write":..}] → 세션에 대기 등록, 표시는 사람 문장만
     m = re.search(r'\[파견:\s*(\{.*?\})\s*\]', answer, re.S)
@@ -3645,7 +3911,7 @@ def main():
         "sweep": cmd_sweep, "report": cmd_report, "brief": cmd_brief,
         "status": cmd_status, "enqueue": cmd_enqueue, "done": cmd_done,
         "resolve": cmd_resolve, "log": cmd_log,
-        "ask": cmd_ask, "do": cmd_do, "pet": cmd_pet, "hud": cmd_hud, "weekly": cmd_weekly, "grade": cmd_grade, "chat": cmd_chat, "cost": cmd_cost, "doctor": cmd_doctor, "init": cmd_init, "wiki": cmd_wiki, "triage": cmd_triage, "snooze": cmd_snooze, "backfill": cmd_backfill, "project": cmd_project, "pulse": cmd_pulse, "merge": cmd_merge,
+        "ask": cmd_ask, "do": cmd_do, "pet": cmd_pet, "hud": cmd_hud, "weekly": cmd_weekly, "grade": cmd_grade, "chat": cmd_chat, "cost": cmd_cost, "doctor": cmd_doctor, "init": cmd_init, "wiki": cmd_wiki, "triage": cmd_triage, "snooze": cmd_snooze, "backfill": cmd_backfill, "project": cmd_project, "pulse": cmd_pulse, "merge": cmd_merge, "skill": cmd_skill, "cron": cmd_cron, "event": cmd_event, "gateway": cmd_gateway,
     }
     args = sys.argv[1:]
     if not args or args[0] not in cmds:
