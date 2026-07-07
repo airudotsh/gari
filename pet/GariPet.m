@@ -168,7 +168,10 @@ static NSAttributedString *mdRender(NSString *text, CGFloat size, NSColor *color
     headPara.paragraphSpacingBefore = 13; // 제목: 위와는 멀게
     headPara.paragraphSpacing = 5;        // 아래 본문에는 붙게 (근접성)
     NSMutableParagraphStyle *bulletPara = [para mutableCopy];
-    bulletPara.headIndent = 15;           // 불릿 줄바꿈 시 글머리 밑으로 안 들어가게 (행잉 인덴트)
+    bulletPara.headIndent = 14;           // 행잉 인덴트 (줄바꿈이 글머리 밑으로 안 들어감)
+    bulletPara.paragraphSpacing = 5;      // 목록끼리는 촘촘하게 (문단 9보다 좁게)
+    NSMutableParagraphStyle *quipPara = [para mutableCopy];
+    quipPara.paragraphSpacingBefore = 10; // 참견 줄은 본문과 호흡 분리
     BOOL inCode = NO;
     NSArray *lines = [text componentsSeparatedByString:@"\n"];
     for (NSUInteger li = 0; li < lines.count; li++) {
@@ -192,11 +195,21 @@ static NSAttributedString *mdRender(NSString *text, CGFloat size, NSColor *color
         else if ([line hasPrefix:@"## "]) { line = [line substringFromIndex:3]; lineFont = head; linePara = headPara; }
         else if ([line hasPrefix:@"# "]) { line = [line substringFromIndex:2]; lineFont = head; linePara = headPara; }
         if ([line hasPrefix:@"- "]) {
-            line = [@"·  " stringByAppendingString:[line substringFromIndex:2]];
-            if (linePara == para) linePara = bulletPara;
+            line = [line substringFromIndex:2];
+            if (linePara == para || linePara == quipPara) linePara = bulletPara;
+            [out appendAttributedString:[[NSAttributedString alloc] initWithString:@"•  "
+                attributes:@{NSFontAttributeName: base,
+                             NSForegroundColorAttributeName: [lineColor colorWithAlphaComponent:0.45],
+                             NSParagraphStyleAttributeName: bulletPara}]];
         }
-        if ([line containsString:@"\u00ab\ucc38\uacac"] || [line hasPrefix:@"\ucc38\uacac"])
-            lineColor = accent;   // «참견 줄은 포인트 컬러
+        if ([line containsString:@"«참견"] || [line hasPrefix:@"참견 —"]) {
+            lineColor = accent;                       // 색 + 여백이 곧 참견 표기 — 라벨 불필요
+            linePara = quipPara;
+            NSRange r = [line rangeOfString:@"참견"];
+            line = [line substringFromIndex:NSMaxRange(r)];
+            line = [line stringByTrimmingCharactersInSet:
+                [NSCharacterSet characterSetWithCharactersInString:@" —–-:«»"]];
+        }
         NSArray *codeParts = [line componentsSeparatedByString:@"`"];
         for (NSUInteger ci = 0; ci < codeParts.count; ci++) {
             if (![codeParts[ci] length]) continue;
@@ -301,7 +314,9 @@ static NSView *hudRowCard(CGFloat width) {
 @property NSPoint lookTarget;    // 두리번 목표 (lookVec이 이쪽으로 보간)
 @property (strong) NSWindow *hudWindow;     // 현황판 — 클릭으로 토글
 @property (strong) NSScrollView *hudScroll; // 콘텐츠 (JSON → 네이티브 행)
-@property (strong) NSTextField *hudInput;   // 패널 하단 질문창
+@property (strong) NSTextView *hudInput;    // 패널 하단 질문창 (다중행 성장)
+@property (strong) NSScrollView *hudInputScroll;
+@property (strong) NSTextField *hudPlaceholder;
 @property (strong) NSTextField *headerSub;  // 헤더 상태 줄
 @property (strong) NSTextField *headerTime;
 @property (strong) NSView *headerDot;       // 파이프라인 상태 점
@@ -337,10 +352,16 @@ static NSView *hudRowCard(CGFloat width) {
 
 @implementation ResizeGrip
 - (void)drawRect:(NSRect)r {
-    [[NSColor colorWithCalibratedWhite:1 alpha:0.30] setFill];
-    for (int i = 0; i < 3; i++)
-        for (int j = 0; j <= i; j++)
-            NSRectFill(NSMakeRect(self.bounds.size.width - 4 - 4 * i, 3 + 4 * j, 2, 2));
+    NSBezierPath *ln = [NSBezierPath bezierPath];
+    ln.lineWidth = 1.2;
+    CGFloat W = self.bounds.size.width, m = 3;
+    for (int i = 0; i < 3; i++) {   // 우하단 대각선 3줄 — 표준 리사이즈 그립
+        CGFloat off = 3 + i * 3.5;
+        [ln moveToPoint:NSMakePoint(W - m - off, m)];
+        [ln lineToPoint:NSMakePoint(W - m, m + off)];
+    }
+    [[NSColor colorWithCalibratedWhite:1 alpha:0.22] setStroke];
+    [ln stroke];
 }
 - (void)resetCursorRects {
     if (@available(macOS 15.0, *)) {
@@ -647,8 +668,8 @@ static NSView *hudRowCard(CGFloat width) {
     [[NSColor colorWithCalibratedWhite:0.98 alpha:0.96] setFill];
     [[NSBezierPath bezierPathWithRoundedRect:bub xRadius:8 yRadius:8] fill];
     NSBezierPath *tail = [NSBezierPath bezierPath];    // 말풍선 꼬리
-    [tail moveToPoint:NSMakePoint(headX - 3, by)];
-    [tail lineToPoint:NSMakePoint(headX + 7, by)];
+    [tail moveToPoint:NSMakePoint(headX - 3, by + 2)];   // 몸통에 겹쳐 이음새 제거
+    [tail lineToPoint:NSMakePoint(headX + 7, by + 2)];
     [tail lineToPoint:NSMakePoint(headX + 1, by - 6)];
     [tail closePath];
     [tail fill];
@@ -859,12 +880,7 @@ static NSString *hudTimeShort(NSString *iso) {
     [card addSubview:sv];
     self.hudScroll = sv;
 
-    // ---- 하단 질문 바 ----
-    NSView *divider = [[NSView alloc] initWithFrame:NSMakeRect(0, 56, size.width, 1)];
-    divider.wantsLayer = YES;
-    divider.layer.backgroundColor = [NSColor colorWithCalibratedWhite:1.0 alpha:0.07].CGColor;
-    divider.autoresizingMask = NSViewWidthSizable;
-    [card addSubview:divider];
+    // ---- 하단 질문 바 (구분선 없음 — 입력 상자 테두리가 곧 경계) ----
 
     // 껍데기(스타일) + 순수 입력(글자만) 분리 — 텍스트필드에 직접 스타일을 주면
     // 글자 상단 붙음 + 편집기 이중 배경으로 깨진다
@@ -884,33 +900,77 @@ static NSString *hudTimeShort(NSString *iso) {
     [card addSubview:grip];
     self.hudGrip = grip;
 
-    NSTextField *input = [[NSTextField alloc] init];
-    input.bordered = NO;
-    input.bezeled = NO;
-    input.drawsBackground = NO;
-    input.focusRingType = NSFocusRingTypeNone;
-    input.font = [NSFont systemFontOfSize:13];
-    input.textColor = [NSColor colorWithCalibratedWhite:0.95 alpha:1];
-    input.placeholderAttributedString = [[NSAttributedString alloc]
-        initWithString:@"가리에게 물어보기…"
-        attributes:@{NSForegroundColorAttributeName: [NSColor colorWithCalibratedWhite:0.48 alpha:1],
-                     NSFontAttributeName: [NSFont systemFontOfSize:13]}];
-    input.target = self;
-    input.action = @selector(hudAsk:);
-    input.delegate = (id<NSTextFieldDelegate>)self;
-    [input sizeToFit];
-    CGFloat fieldH = input.frame.size.height;   // 글꼴 자연 높이 → 세로 중앙
-    input.frame = NSMakeRect(12, (wrapH - fieldH) / 2,
-                             inputWrap.frame.size.width - 24, fieldH);
-    [inputWrap addSubview:input];
-    self.hudInput = input;
+    NSScrollView *inSv = [[NSScrollView alloc]
+        initWithFrame:NSMakeRect(12, 11, inputWrap.frame.size.width - 24, wrapH - 22)];
+    inSv.drawsBackground = NO;
+    inSv.hasVerticalScroller = YES;
+    inSv.autohidesScrollers = YES;
+    inSv.borderType = NSNoBorder;
+    NSTextView *tv = [[NSTextView alloc] initWithFrame:
+        NSMakeRect(0, 0, inSv.frame.size.width, inSv.frame.size.height)];
+    tv.richText = NO;
+    tv.drawsBackground = NO;
+    tv.font = [NSFont systemFontOfSize:13];
+    tv.textColor = [NSColor colorWithCalibratedWhite:0.95 alpha:1];
+    tv.insertionPointColor = [NSColor colorWithCalibratedWhite:0.95 alpha:1];
+    tv.textContainerInset = NSMakeSize(0, 1);
+    tv.textContainer.lineFragmentPadding = 0;
+    tv.verticallyResizable = YES;
+    tv.horizontallyResizable = NO;
+    tv.autoresizingMask = NSViewWidthSizable;
+    tv.textContainer.widthTracksTextView = YES;
+    tv.delegate = (id<NSTextViewDelegate>)self;
+    inSv.documentView = tv;
+    [inputWrap addSubview:inSv];
+    self.hudInputScroll = inSv;
+    self.hudInput = tv;
+
+    NSTextField *ph = hudLabel(@"가리에게 물어보기…", [NSFont systemFontOfSize:13],
+                               [NSColor colorWithCalibratedWhite:0.48 alpha:1], 1,
+                               inputWrap.frame.size.width - 24);
+    ph.frame = NSMakeRect(13, (wrapH - ph.frame.size.height) / 2,
+                          inputWrap.frame.size.width - 24, ph.frame.size.height);
+    [inputWrap addSubview:ph];
+    self.hudPlaceholder = ph;
 
     return card;
 }
 
+// ---- 다중행 입력기: Enter=전송 / Shift+Enter=줄바꿈, 내용에 맞춰 성장 (최대 5줄) ----
+- (BOOL)textView:(NSTextView *)tv doCommandBySelector:(SEL)sel {
+    if (sel == @selector(insertNewline:)) {
+        if (NSEvent.modifierFlags & NSEventModifierFlagShift) return NO;   // 줄바꿈 허용
+        [self hudAsk:nil];
+        return YES;
+    }
+    return NO;
+}
+
+- (void)textDidChange:(NSNotification *)n {
+    self.hudPlaceholder.hidden = self.hudInput.string.length > 0;
+    [self growInput];
+}
+
+- (void)growInput {
+    NSTextView *tv = self.hudInput;
+    (void)[tv.layoutManager glyphRangeForTextContainer:tv.textContainer];
+    CGFloat used = [tv.layoutManager usedRectForTextContainer:tv.textContainer].size.height;
+    CGFloat wrapH = MAX(44, MIN(124, ceil(used) + 24));   // 1~5줄 성장, 이후 내부 스크롤
+    NSView *wrap = self.hudInputScroll.superview;
+    if (fabs(wrap.frame.size.height - wrapH) < 1) return;
+    NSView *card = wrap.superview;
+    CGFloat W = card.frame.size.width, H = card.frame.size.height;
+    wrap.frame = NSMakeRect(14, 9, W - 28, wrapH);
+    self.hudInputScroll.frame = NSMakeRect(12, 11, W - 28 - 24, wrapH - 22);
+    CGFloat bottom = 9 + wrapH + 4;
+    CGFloat headerH = 68;
+    self.hudScroll.frame = NSMakeRect(0, bottom, W, H - headerH - bottom);
+    [self buildHud];
+}
+
 // 편집 시작 시 커서(삽입점)를 밝게 — 어두운 패널에서 기본 검정 커서는 안 보인다
 - (void)controlTextDidBeginEditing:(NSNotification *)note {
-    NSTextView *editor = (NSTextView *)[self.hudInput currentEditor];
+    NSTextView *editor = self.hudInput;
     if ([editor isKindOfClass:NSTextView.class]) {
         editor.insertionPointColor = [NSColor colorWithCalibratedWhite:0.95 alpha:1];
         editor.drawsBackground = NO;
@@ -922,11 +982,12 @@ static NSString *hudTimeShort(NSString *iso) {
     NSDictionary *j = @{@"w": @(s.width), @"h": @(s.height)};
     [[NSJSONSerialization dataWithJSONObject:j options:0 error:nil]
         writeToFile:[GariStateReader gariPath:@"pet/hud-size.json"] atomically:YES];
-    NSString *typed = self.hudInput.stringValue ?: @"";
+    NSString *typed = self.hudInput.string ?: @"";
     self.hudWindow.contentView = [self makeHudCard:s];
     [self wireGrip];
     [self buildHud];
-    self.hudInput.stringValue = typed;
+    self.hudInput.string = typed;
+    [self textDidChange:nil];
     [self.hudWindow makeFirstResponder:self.hudInput];
 }
 
@@ -1073,7 +1134,7 @@ static NSString *hudTimeShort(NSString *iso) {
             NSTextField *pj = hudLabel(b[@"project"],
                 [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold], fg, 1, contentW - 28);
             NSTextField *idl = hudLabel(b[@"identity"],
-                [NSFont systemFontOfSize:10.5], dim, 1, contentW - 28);
+                [NSFont systemFontOfSize:10.5], dim, 2, contentW - 28);
             NSTextField *nx = hudLabel([b[@"next"] length]
                     ? [NSString stringWithFormat:@"다음: %@", b[@"next"]] : @"다음: (미결 없음)",
                 [NSFont systemFontOfSize:11.5],
@@ -1446,6 +1507,7 @@ static NSString *hudTimeShort(NSString *iso) {
             ctx.duration = 0.3;
             lastAnswer.animator.alphaValue = 1;
         }];
+        [self.hudWindow makeFirstResponder:self.hudInput];   // 답 왔으니 바로 이어 쓸 수 있게
     }
     self.lastThreadCount = (NSInteger)thread.count;
     if (self.asking) {
@@ -1656,16 +1718,16 @@ static NSString *hudTimeShort(NSString *iso) {
 - (void)compassRowTapped:(NSClickGestureRecognizer *)g {
     NSString *proj = g.view.identifier;
     if (!proj.length || self.asking) return;
-    self.hudInput.stringValue = [NSString stringWithFormat:
-        @"%@ 프로젝트 지금 방향이 어떻게 되고 있어? 다음에 뭘 정해야 해?", proj];
+    [self.hudInput setString:[NSString stringWithFormat:
+        @"%@ 프로젝트 지금 방향이 어떻게 되고 있어? 다음에 뭘 정해야 해?", proj]];
     [self hudAsk:nil];
 }
 
 - (void)pendingRowTapped:(NSClickGestureRecognizer *)g {
     NSString *pid = g.view.identifier;
     if (!pid.length || self.asking) return;
-    self.hudInput.stringValue = [NSString stringWithFormat:
-        @"미결 카드 %@ — 이게 무슨 맥락에서 나온 건지, 지금도 유효한지 알려줘", pid];
+    [self.hudInput setString:[NSString stringWithFormat:
+        @"미결 카드 %@ — 이게 무슨 맥락에서 나온 건지, 지금도 유효한지 알려줘", pid]];
     [self hudAsk:nil];
 }
 
@@ -1700,13 +1762,16 @@ static NSString *hudTimeShort(NSString *iso) {
 
 // 패널 질문창 제출 (Enter)
 - (void)hudAsk:(id)sender {
-    NSString *q = [self.hudInput.stringValue stringByTrimmingCharactersInSet:
+    NSString *q = [self.hudInput.string stringByTrimmingCharactersInSet:
                    NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (q.length == 0 || self.asking) return;
     self.lastQ = q;
     self.lastA = @"";
     self.asking = YES;
     self.hudMode = 1;   // 질문하면 대화 탭으로
+    [self buildHud];
+    NSView *sd = self.hudScroll.documentView;   // 전송 = 내 말풍선이 있는 맨 아래로
+    [sd scrollPoint:NSMakePoint(0, MAX(0, sd.frame.size.height - self.hudScroll.frame.size.height))];
     [self.askTimer invalidate];
     self.lastAskStatus = @"";
     self.askTimer = [NSTimer scheduledTimerWithTimeInterval:0.6 repeats:YES block:^(NSTimer *t) {
@@ -1719,8 +1784,8 @@ static NSString *hudTimeShort(NSString *iso) {
             if (self.asking && self.hudWindow.isVisible && self.hudMode == 1) [self buildChat];
         }
     }];
-    self.hudInput.enabled = NO;
-    self.hudInput.stringValue = @"";
+    [self.hudInput setString:@""];   // 잠그지 않는다 — 잠금/해제 왕복이 포커스를 엉키게 함
+    [self textDidChange:nil];
     [self buildHud];
 
     NSTask *t = [NSTask new];
@@ -1739,7 +1804,6 @@ static NSString *hudTimeShort(NSString *iso) {
             [weakSelf.askTimer invalidate];
             weakSelf.askTimer = nil;
             weakSelf.lastQ = nil;   // 스레드(원장)가 이제 진실 — 낙관적 말풍선 제거
-            weakSelf.hudInput.enabled = YES;
             weakSelf.happyUntil = [NSDate dateWithTimeIntervalSinceNow:1.5];
             weakSelf.hopV = 6.0;   // 답 가져왔어요 — 깡총
             [weakSelf fetchHud];
@@ -1750,7 +1814,6 @@ static NSString *hudTimeShort(NSString *iso) {
     @catch (NSException *ex) {
         self.asking = NO;
         self.lastA = @"창구 연결 실패 — ~/gari/bin/gari 확인 요망";
-        self.hudInput.enabled = YES;
         [self buildHud];
     }
 }

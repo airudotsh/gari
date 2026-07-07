@@ -113,6 +113,18 @@ def append_cards(cards):
             f.write(json.dumps(c, ensure_ascii=False) + "\n")
 
 
+PROJECT_ALIASES = {"review-board": "review-board", "review-board": "review-board",
+                   "review-board": "review-board", "sound-library": "sound-library",
+                   "sound-library": "sound-library", "젤리피시": "jellyfish",
+                   "뇌클론": "brain-clone", "브레인클론": "brain-clone"}
+
+
+def canonical_project(name):
+    if not name:
+        return name
+    return PROJECT_ALIASES.get(str(name).strip().lower(), PROJECT_ALIASES.get(str(name).strip(), name))
+
+
 def read_cards_all():
     """카드 원장 전체 (자정 넘김에 안전 — '전체' 의도는 반드시 이걸 쓸 것)."""
     return read_cards(3650)
@@ -384,7 +396,9 @@ def distill(turns, tool, project, session, burst_id, cfg):
     blob, truncated = build_distill_input(turns, cfg)
     extra = ""
     if tool == "gari-chat":
-        names = ", ".join(sorted({Path(pth).name for pth in cfg["allowlist_paths"]}))
+        known = {wf.stem for wf in WIKI_DIR.glob("*.md")} if WIKI_DIR.exists() else set()
+        known |= {Path(pth).name for pth in cfg["allowlist_paths"]}
+        names = ", ".join(sorted(known))
         extra = ("\n추가 규칙 (가리와의 대화 발췌임):\n"
                  "- 이미 기록된 사실의 단순 회상·확인 문답은 카드로 만들지 마라 — 새로운 결정·미결·의견·계획만.\n- 카드의 근거는 형님의 발화만이다. 가리(비서) 답변 속 사실 주장·상태 단정은 절대 카드로 만들지 마라 — 비서의 오답이 기억으로 굳는 것 방지.\n"
                  "- 각 카드에 \"project\" 필드를 넣어라: 내용이 어느 프로젝트 얘기인지 (%s 중 하나, 모르면 \"대화\").") % names
@@ -714,6 +728,12 @@ def compose_next_step(cards, cfg):
         DISTILL_MARKER, north_head,
         "\n".join("- " + c["text"] for c in pend[:6]) or "(없음)",
         "\n".join(roadmap_items) or "(없음)")
+    gaps = wiki_gaps()
+    if gaps:
+        gap_txt = ", ".join("%s의 '%s'" % (g[0], g[1]) for g in gaps[:6])
+        prompt += ("\n\n[시스템이 아는 자기 무지 — 위키 빈칸]\n%s\n"
+                   "②의 '질문'은 **반드시 이 빈칸 중 첫 번째 것을 겨냥해라** (더 긴급한 차단 사안이 있을 때만 예외) — "
+                   "형님이 입력창에 답하는 순간 그 빈칸이 기록으로 채워진다. 한 번에 하나만, 구체적으로.") % gap_txt
     prompt += "\n\n" + (TEMPLATES / "thinking-lenses.txt").read_text(encoding="utf-8")
     _prefs = load_prefs()
     if _prefs:
@@ -831,7 +851,7 @@ def cmd_report(args):
     # 큐 정리 제안 — 병목 인간이 큐의 사서가 되지 않게 (제안만, 자동 해소 없음)
     try:
         tdata = run_triage(cfg)
-        tlines = triage_summary_lines(tdata, {c["id"]: c for c in open_pendings(read_cards_all())})
+        tlines = triage_summary_lines(tdata, {c["id"]: c for c in open_pendings(read_cards_all()) if c.get("id")})
         if tlines:
             report += "\n## 큐 정리 제안 (가리가 검토함)\n\n" + "\n".join("- " + l for l in tlines) + "\n"
     except (RuntimeError, json.JSONDecodeError) as e:
@@ -1422,7 +1442,10 @@ def cmd_ask(args):
              "- 모순 순찰: 하루 1회 아침 트리아지에서. 실시간이 아니다.\n"
              "- 뇌 배치: 접수·기억답변·증류=haiku / 판단·멘토·일반지식·아침산출=sonnet.\n"
              "- 저장: ~/gari/store (카드 원장·대화·보고). 원문 대화는 각 CLI 폴더에 그대로, 가리는 읽기만.\n"
-             "- 수집 범위: 전량 (2026-07-06 형님 지시). 그 이전 회사 기록은 소급분만.") % (
+             "- 수집 범위: 전량 (2026-07-06 형님 지시). 그 이전 회사 기록은 소급분만.\n"
+             "- 화면 지도 — 현황판 탭: ①오늘 카드(한 칸·멘토 훈련·참견·질문 — 아침 산출) ②프로젝트 방향판(위키 기반, 프로젝트별 정체+다음 결정) "
+             "③처리함(형님 액션 인박스: ▶지금 이거 1건 / 끝난 듯·중복=가리 정리 제안으로 접힘 / ◇결재 / 채점 맞음·오발 / 실무 대기=파견 가능이라 접힘 / 그 외 미결) "
+             "④오늘 기록 1줄. 대화 탭: 세션 목록·말풍선 스레드. 행 클릭=맥락 질문, 완료/나중에 버튼.") % (
         cfg["sweep_interval_min"], cfg["report_hour"])
     persona += facts
     if cfg.get("collect_all"):
@@ -1444,10 +1467,20 @@ def cmd_ask(args):
         DISTILL_MARKER, persona, lenses,
         "\n".join(lines) or "(없음)", hist_txt or "(첫 대화)", question)
 
+    SELF_WORDS = ("처리함", "현황판", "방향판", "위키", "카드", "재우", "나중에", "스누즈",
+                  "브리핑", "아침 보고", "보고서", "트리아지", "정리 제안", "펫", "말풍선",
+                  "입력창", "대화창", "세션", "소급", "증류", "수집")
+    self_q = any(w in question for w in SELF_WORDS)
+    if self_q:
+        # 자기 구조 질문 고속차선 — 심층 금지, 사실표 즉답 (몇 초)
+        persona += ("\n\n[고속차선] 이 질문은 가리 자기 구조·규칙에 대한 것이다. "
+                    "위 사실표와 화면 지도로 지금 즉답하라. [깊은사고]·[일반질문] 마커 출력 금지.")
+    elif deep_session:
+        # 논의 세션: 접수는 거치되, 판단 계열이면 주저 없이 심층으로 보내라는 편향만 부여
+        persona += ("\n\n[지금 이 세션은 깊은 논의 중] 직전 주제의 전략·판단 후속이면 주저 없이 [깊은사고]를 출력하라. "
+                    "단 가벼운 사실·설명 질문이면 네가 즉답하라 — 심층은 느리고 비싸다.")
     set_ask_status("기억 대조 중 — 최근 3일 카드 %d장" % len(lines))
-    if deep_session:
-        answer, rc = "[깊은사고]", 0   # 논의가 열린 세션 — 접수 건너뛰고 바로 깊은 뇌로
-    elif tool == "gjc":
+    if tool == "gjc":
         r = subprocess.run([cfg["gjc_bin"], "-p", "--no-session", "--no-tools", full],
                            capture_output=True, text=True,
                            timeout=cfg["distill_timeout_sec"], cwd=str(GARI_HOME))
@@ -1485,6 +1518,7 @@ def cmd_ask(args):
                       + "\n---\n".join(wiki_txts)) if wiki_txts else ""
         deep_prompt = ("%s 너는 \"가리\" — 형님(아이루)의 기획 파트너다. 시니어 프로덕트 리더의 깊이로 논의를 리드하라. "
                        + facts.replace("%", "%%") + "\n"
+                       "**형님의 마지막 질문에 첫 문단에서 직답부터 하라** — 직전 논의로 잇는 건 그 다음이다. "
                        "이건 단답이 아니라 **논의**다. 구조: ① 형님 말의 요지 재구성 (한 줄) ② 지금까지의 사실 (카드 인용) "
                        "③ 갈림길 2~3개와 각각의 트레이드오프 ④ 가리의 추천과 근거 (사고 원전 렌즈 1~3개 적용 — 렌즈명은 한글 풀이) "
                        "⑤ 논의를 진전시키는 반문 하나 — 답이 방향을 바꾸는 질문으로. "
@@ -1521,13 +1555,32 @@ def cmd_ask(args):
         set_ask_status("문서 조사 중…")
         deep = ("%s %s\n\n카드에는 기록이 없었다. **~/gari/store/wiki/ 의 프로젝트 위키를 먼저 보고**, "
                 "그다음 ~/gari, ~/roadmap, ~/brain-clone 의 문서를 "
-                "Read/Glob/Grep으로 직접 조사해서 답하라. 그래도 없으면 어디를 찾아봤는지 밝혀라.\n"
+                "Read/Glob/Grep으로 직접 조사해서 답하라. "
+                "화면·기능·사용법 질문이면 소스코드보다 ~/gari/docs/INVENTORY.md와 README.md를 우선 근거로 하라. "
+                "답은 제품 언어로만 — 라인번호·git 상태·카드 ID 노출 금지 (형님은 기획자다). 그래도 없으면 어디를 찾아봤는지 밝혀라.\n"
                 "=== 형님의 질문 ===\n%s") % (DISTILL_MARKER, persona, question)
         a2, rc2 = run_claude_stream(deep, cfg["ask_model"], cfg, "ask-docs",
                                     "Read,Glob,Grep", timeout=cfg["do_timeout_sec"],
                                     cwd=str(Path.home()))
         if a2:
             answer = "(기록엔 없어서 문서를 뒤졌습니다) " + a2
+
+    # 낡은 기록 정정 마커: [해소: {...}] → 발견 즉시 미결을 근거와 함께 접는다
+    for hm in re.finditer(r'\[해소:\s*(\{.*?\})\s*\]', answer, re.S):
+        try:
+            rec = json.loads(hm.group(1))
+        except json.JSONDecodeError:
+            continue
+        tgt = next((c for c in open_pendings(read_cards_all())
+                    if c.get("id") == rec.get("id")), None)
+        if tgt and rec.get("evidence"):
+            append_cards([{"id": hashlib.md5(("자가해소" + tgt["id"]).encode()).hexdigest()[:8],
+                           "ts": now_iso(), "tool": "gari-chat", "project": tgt.get("project"),
+                           "session": sid, "burst": "self-correct",
+                           "type": "decision",
+                           "text": "(해소·가리 정정) %s — 근거: %s" % (tgt["text"][:50], rec["evidence"][:80]),
+                           "resolves": tgt["id"], "resolves_text": tgt["text"]}])
+    answer = re.sub(r'\s*\[해소:[^\]]*\]', '', answer).strip()
 
     # 논의 결정 마커: [기록: {...}] → 결정/미결 카드로 적재 (논의가 기억이 되는 문)
     for km in re.finditer(r'\[기록:\s*(\{.*?\})\s*\]', answer, re.S):
@@ -1671,8 +1724,8 @@ def _hud_compass(cards):
     cutoff = (datetime.now().astimezone() - timedelta(days=3)).isoformat()
     for c in cards:
         if c["ts"] >= cutoff and c.get("type") != "snooze":
-            name = _proj_short(c)
-            if name not in ("?", "대화", ""):
+            name = canonical_project(_proj_short(c))
+            if name not in ("?", "대화", "") and name not in NOISE_PROJECTS:
                 recent[name] += 1
     board = []
     for name, cnt in recent.most_common(5):
@@ -1683,19 +1736,24 @@ def _hud_compass(cards):
         for line in wf.read_text(encoding="utf-8").splitlines():
             if line.startswith("**정체**:") and not ident:
                 ident = line.split(":", 1)[1].strip()
-        # 두 번째 패스: 열린 미결 첫 항목
-        in_pending = False
-        for line in wf.read_text(encoding="utf-8").splitlines():
-            if line.startswith("**열린 미결**"):
-                in_pending = True
-                continue
-            if in_pending and line.startswith("- "):
-                nxt = line[2:].strip()
+        # '다음' 승격 규칙: 방향의 선행(미정의 빈칸) > 전술(열린 미결)
+        txt = wf.read_text(encoding="utf-8")
+        for field in ("존재 이유", "성공 기준"):
+            if ("**%s" % field) in txt and "미정의" in txt.split("**%s" % field)[1][:120]:
+                nxt = "'%s' 정의 필요 — 방향의 선행 조건 (가리가 아침 질문으로 묻습니다)" % field
                 break
-            if in_pending and line.startswith("**"):
-                break
-        board.append({"project": name, "identity": ident[:60],
-                      "next": nxt[:70], "activity": cnt})
+        if not nxt:
+            in_pending = False
+            for line in txt.splitlines():
+                if line.startswith("**열린 미결**"):
+                    in_pending = True
+                    continue
+                if in_pending and line.startswith("- "):
+                    nxt = line[2:].strip()
+                    break
+                if in_pending and line.startswith("**"):
+                    break
+        board.append({"project": name, "identity": ident, "next": nxt, "activity": cnt})
     return board
 
 
@@ -1883,7 +1941,7 @@ def run_triage(cfg):
               for c in read_cards(3)[-150:] if c["type"] != "pending"]
     decisions = ["(%s) %s [%s] %s" % (c.get("id", "-"), c["ts"][5:16], _proj_short(c), c["text"])
                  for c in read_cards(7) if c["type"] in ("decision", "correction")][-120:]
-    plist_txt = "\n".join("(%s) [%s] %s" % (c["id"], _proj_short(c), c["text"]) for c in pends)
+    plist_txt = "\n".join("(%s) [%s] %s" % (c.get("id", "-"), _proj_short(c), c["text"]) for c in pends)
     prompt = ("%s 너는 가리 — 사용자의 미결 큐를 정리하는 사서다. 미결 목록과 최근 활동 기록을 대조해 JSON만 출력하라 (설명 금지):\n"
               '{"now": {"id": "...", "why": "왜 이것부터인지 한 문장"},\n'
               ' "done_like": [{"id": "...", "evidence": "완료로 보이는 근거 — 반드시 기록에서 인용"}],\n'
@@ -1974,7 +2032,7 @@ def cmd_triage(args):
     if not data:
         print("미결 0건 — 정리할 것이 없습니다.")
         return 0
-    pends = {c["id"]: c for c in open_pendings(read_cards_all())}
+    pends = {c["id"]: c for c in open_pendings(read_cards_all()) if c.get("id")}
     lines = triage_summary_lines(data, pends)
     print("미결 %d건 검토:" % len(pends))
     for line in lines:
@@ -1985,6 +2043,26 @@ def cmd_triage(args):
 
 
 MENTOR_PATH = STORE / "mentor.txt"
+
+
+NOISE_PROJECTS = {"T", "observer-sessions", "tmp", "user", "spike-t8", "spike-updatedinput"}
+
+
+def wiki_gaps():
+    """위키의 '미정의' 필드들 — 시스템이 스스로 아는 무지. 활동 많은 프로젝트 순."""
+    if not WIKI_DIR.exists():
+        return []
+    order = [b["project"] for b in _hud_compass(read_cards(3))]
+    gaps = []
+    for wf in WIKI_DIR.glob("*.md"):
+        if wf.stem in NOISE_PROJECTS:
+            continue
+        for line in wf.read_text(encoding="utf-8").splitlines():
+            if "미정의" in line and line.startswith("**"):
+                field = line.split("**")[1].split("(")[0].strip()
+                gaps.append((wf.stem, field))
+    gaps.sort(key=lambda g: order.index(g[0]) if g[0] in order else 99)
+    return gaps
 
 
 def compose_mentor_review(cfg):
@@ -2021,7 +2099,7 @@ def regenerate_wikis(cfg, force=False):
     for c in cards:
         if c.get("type") == "snooze":
             continue
-        name = _proj_short(c)
+        name = canonical_project(_proj_short(c))
         if name in ("?", "대화", ""):
             continue
         by_proj.setdefault(name, []).append(c)
