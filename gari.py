@@ -159,6 +159,36 @@ def read_cards(days_back):
     return cards
 
 
+def shadow_stale_decisions(cards):
+    """읽기 시점 무효화(Graphiti 차용, LLM 없음): 같은 프로젝트의 더 새로운 결정·정정과
+    토큰이 크게 겹치는 옛 결정에 '(낡음—후속 기록 있음)' 표식. 원장은 불변, 표식은 사본에만."""
+    _STOP = {"로", "은", "는", "이", "가", "을", "를", "의", "와", "과", "도", "만", "에", "서", "고"}
+    def toks(t):
+        return {w for w in re.findall(r"[가-힣]+|[a-zA-Z0-9]{2,}", t)[:40] if w not in _STOP}
+    out = [dict(c) for c in cards]
+    by_proj = {}
+    for c in out:
+        if c.get("type") in ("decision", "correction"):
+            by_proj.setdefault(c.get("project", "?"), []).append(c)
+    for cs in by_proj.values():
+        cs.sort(key=lambda c: c.get("ts", ""))
+        for i, old_c in enumerate(cs):
+            if old_c["type"] != "decision":
+                continue
+            ot = toks(old_c["text"])
+            if not ot:
+                continue
+            for new_c in cs[i + 1:]:
+                ov = len(ot & toks(new_c["text"]))
+                # 정정은 덮으라고 태어난 카드 — 결정끼리보다 낮은 문턱으로 그림자를 드리운다
+                need = max(2, -(-len(ot) * 4 // 10)) if new_c["type"] == "correction" \
+                    else max(3, -(-len(ot) * 6 // 10))
+                if ov >= need:
+                    old_c["text"] = "(낡음—후속 기록 있음) " + old_c["text"]
+                    break
+    return out
+
+
 def open_pendings(cards, include_snoozed=False):
     """미결 중 아직 해소 안 된 것 — 브리핑·보고·resolve가 같은 목록과 번호를 봐야 한다.
     재워둔 것(snooze)은 기한 전까지 목록에서 숨긴다 — '지금 결정 안 함'도 유효한 처리다."""
@@ -954,6 +984,46 @@ def cmd_report(args):
 MISSES_PATH = STORE / "misses.jsonl"
 
 
+NAG_JUDGE_LOG = STORE / "nag-judge.jsonl"
+
+
+def judge_nag(question, answer, cfg):
+    """참견 자동 판정 게이트 (SocraticBench Judge 차용): 내보내기 전 '가르치는 짚기'인지 판정.
+    헛짚기(이미 결정된 것 재론, 질문과 무관, 일반론)면 참견 줄만 회수하고 로그에 남긴다 —
+    사용자 채점(L2)의 전단 필터. 판정 실패 시엔 그대로 내보낸다 (게이트가 대화를 막으면 안 됨)."""
+    m = re.search(r"«참견[^»]*»?\s*[—-]?\s*(.+?)(?:\n\n|$)", answer, re.S)
+    if not m:
+        return answer
+    nag = m.group(0)
+    vp = ("%s [배치 판정 모드 — 대화가 아니다. 모드 판별·승인·권한 개념 적용 금지, 도구 불필요. "
+          "출력은 JSON 한 덩어리뿐.] 아래는 비서가 사용자 답변 끝에 붙이려는 '참견'이다.\n"
+          "사용자 질문: %s\n참견: %s\n"
+          "판정 기준 — 다음 중 하나면 miss: 이미 결정·완료된 사안의 재론 / 질문 맥락과 무관 / "
+          "근거 없는 일반론('~하면 좋습니다'류) / 사용자가 방금 한 말의 반복. "
+          "구체적 빈틈을 근거와 함께 짚으면 teach.\n"
+          'JSON만: {"verdict": "teach|miss", "reason": "한 줄"}') % (
+        DISTILL_MARKER, question[:200], nag[:300])
+    vtext, vrc = run_claude(vp, cfg["ask_model"], cfg, "nag-judge", timeout=60, max_out=2000)
+    mm = re.search(r"\{.*\}", vtext or "", re.S)
+    if vrc != 0 or not mm:
+        return answer
+    try:
+        vj = json.loads(mm.group(0))
+    except json.JSONDecodeError:
+        return answer
+    try:
+        with open(NAG_JUDGE_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": now_iso(), "verdict": vj.get("verdict"),
+                                "reason": str(vj.get("reason", ""))[:100],
+                                "nag": nag[:200]}, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+    if vj.get("verdict") == "miss":
+        metric("nag_gated", vj.get("reason", "")[:60])
+        return answer.replace(nag, "").rstrip()
+    return answer
+
+
 def grade_feedback(cards=None):
     """채점(맞음/오발) → 참견 조준 보정문. 채점이 없으면 빈 문자열 (주입 생략).
     cards에 전체 원장을 넘겨도 내부에서 최근 14일 창만 쓴다 (낡은 오발이 영구히 조준을 흔들지 않게)."""
@@ -973,6 +1043,15 @@ def grade_feedback(cards=None):
     if hit:
         out.append("적중했던 참견 (이런 계열이 형님에게 유효하다):")
         out += ["- " + txt(c) for c in hit[-2:]]
+    hits_f = STORE / "nag-hits.jsonl"
+    if hits_f.exists():
+        try:
+            pool_hits = [json.loads(l) for l in hits_f.read_text(encoding="utf-8").splitlines() if l.strip()]
+            if pool_hits:
+                out.append("적중 참견 실예시 (이 수준의 구체성을 기준으로):")
+                out += ["  예) " + h["text"][:150] for h in pool_hits[-2:]]
+        except (json.JSONDecodeError, OSError):
+            pass
     return "\n".join(out)
 
 
@@ -1357,6 +1436,13 @@ def cmd_grade(args):
     if target is None:
         print("해당 ID의 그림자 카드가 없습니다: %s" % cid)
         return 1
+    if verdict == "right":
+        try:
+            with open(STORE / "nag-hits.jsonl", "a", encoding="utf-8") as f:
+                f.write(json.dumps({"ts": now_iso(), "text": target["text"][:300]},
+                                   ensure_ascii=False) + "\n")
+        except OSError:
+            pass
     append_cards([{"id": hashlib.md5(("grade" + cid).encode()).hexdigest()[:8],
                    "ts": now_iso(), "tool": "gari", "project": target.get("project"),
                    "session": "", "burst": "grade",
@@ -1979,7 +2065,7 @@ def cmd_ask(args):
     cards = read_cards(cfg["briefing_days"])
     # 관련 카드 소환: 질문 키워드로 전체 원장 검색 → 최신 창에 합류 (최신 홍수에 기억이 밀려나지 않게)
     tokens = [t for t in re.findall(r"[가-힣a-zA-Z0-9]{2,}", question)][:8]
-    pool = read_cards_all()
+    pool = shadow_stale_decisions(read_cards_all())
     relevant = [c for c in pool
                 if any(t in c.get("text", "") or t in str(c.get("project", "")) for t in tokens)][-40:]
     seen_ids = set()
@@ -2239,6 +2325,8 @@ def cmd_ask(args):
         except json.JSONDecodeError:
             pass
 
+    if "«참견" in answer:
+        answer = judge_nag(question, answer, cfg)
     set_ask_status("")
     metric("ask_answered", question[:60])
     if re.search(r"(기록은 없|기록이 없|못 찾았|찾을 수 없)", answer):
@@ -2982,10 +3070,11 @@ def project_plan(goal, workdir, write, cfg):
               "목표: %s\n작업 폴더: %s\n%s\n"
               "JSON만 출력:\n"
               '{"title": "짧은 제목", "acceptance": "전체 완료 기준 — 검수자가 코드·파일로 확인 가능하게",\n'
-              ' "milestones": [{"n": 1, "spec": "실무자에게 줄 자족적 한 단락 지시 (파일 경로 포함)", '
+              ' "milestones": [{"n": 1, "deps": [], "spec": "실무자에게 줄 자족적 한 단락 지시 (파일 경로 포함)", '
               '"accept": "이 단계의 검증 가능한 완료 기준"}]}\n'
-              "규칙: 마일스톤 2~6개, 각각 독립 검수 가능해야 함. 순서는 의존성 순. "
-              "각 spec은 이전 단계 결과를 전제해도 되지만 그 사실을 명시하라.") % (
+              "규칙: 마일스톤 2~6개, 각각 독립 검수 가능해야 함. deps는 선행 단계 번호 배열 — "
+              "서로 의존 없는 단계는 deps를 비워 병렬 실행되게 하되, 병렬 가능한 단계끼리는 서로 다른 파일을 다루게 쪼개라. "
+              "각 spec은 재시도될 수 있다 — 이미 있으면 확인 후 이어서 완성하도록(중복 생성 금지) 지시를 쓰라.") % (
         DISTILL_MARKER, goal, workdir,
         ("프로젝트 위키:\n" + wiki_ctx) if wiki_ctx else "")
     text, rc = run_claude(prompt, cfg["deep_model"], cfg, "project-plan",
@@ -2997,7 +3086,9 @@ def project_plan(goal, workdir, write, cfg):
     pid = "p-" + hashlib.md5((goal + now_iso()).encode()).hexdigest()[:6]
     pj = {"id": pid, "title": plan.get("title", goal[:40]), "goal": goal,
           "acceptance": plan.get("acceptance", ""), "dir": workdir, "write": bool(write),
-          "milestones": [{"n": ms.get("n", i + 1), "spec": ms["spec"],
+          "milestones": [{"n": ms.get("n", i + 1),
+                          "deps": [d for d in (ms.get("deps") or []) if isinstance(d, int)],
+                          "spec": ms["spec"],
                           "accept": ms.get("accept", ""), "status": "pending",
                           "attempts": 0, "work_file": "", "proof": ""}
                          for i, ms in enumerate(plan.get("milestones", [])) if ms.get("spec")],
@@ -3020,7 +3111,11 @@ def project_dispatch(pj, ms, cfg):
         wt = str(GARI_HOME / "works" / ("wt-" + pj["id"]))
         spec_txt = spec_txt.replace(str(real), wt).replace(pj["dir"], wt)
         accept_txt = accept_txt.replace(str(real), wt).replace(pj["dir"], wt)
-    spec = ("[가리 프로젝트 '%s' — %d/%d단계] %s%s\n이 단계의 완료 기준: %s") % (
+    spec = ("[가리 프로젝트 '%s' — %d/%d단계] %s%s\n이 단계의 완료 기준: %s\n"
+            "[규약] ① 이 지시는 재시도될 수 있다 — 이미 부분 수행된 흔적이 있으면 중복 생성하지 말고 이어서 완성하라. "
+            "② 착수 전 이미 그랬던 사실(불가능·착수 전부터 완료됨·다른 접근이 명백히 우월)이 계획의 전제를 깨면 "
+            "작업을 진행하지 말고 보고 첫 줄을 '[발견]'으로 시작해 이유만 설명하라 — 계획 수정은 PM(가리)의 몫이다. "
+            "단, 네가 이 세션에서 수행해 완료한 것은 발견이 아니라 정상 완료 보고다.") % (
         pj["title"], ms["n"], len(pj["milestones"]), spec_txt,
         ("\n이전 단계: " + prior) if prior else "", accept_txt or "보고로 판단")
     cmd = [str(GARI_HOME / "bin" / "gari"), "do", spec, "--bg",
@@ -3058,51 +3153,115 @@ def project_verify(pj, ms, cfg):
     return bool(vj.get("pass")), strip_code_coords(str(vj.get("proof", "검수 응답 파싱 실패")))[:150]
 
 
+def _ms_ready(pj, ms):
+    """의존성 그래프 판정 — deps가 전부 done이면 파견 가능. deps 없으면 직전 단계(순차 호환)."""
+    deps = ms.get("deps")
+    if deps is None or deps == []:
+        deps = [ms["n"] - 1] if ms["n"] > 1 and not ms.get("deps") == [] else []
+    if ms.get("deps") == []:
+        deps = []   # 명시적 빈 deps = 뿌리 (병렬 시작점)
+    done_ns = {m["n"] for m in pj["milestones"] if m["status"] == "done"}
+    return all(d in done_ns for d in deps)
+
+
+def project_replan(pj, trigger, cfg):
+    """발견/실패 → 잔여 계획 재검토. 완료 단계는 불변, 미완 단계만 교체 (이중 다이아몬드의 코드화)."""
+    done = [m for m in pj["milestones"] if m["status"] == "done"]
+    rest = [m for m in pj["milestones"] if m["status"] != "done"]
+    prompt = ("%s 너는 가리 — 프로젝트 PM이다. 실행 중 계획 수정이 필요해졌다.\n"
+              "목표: %s\n전체 완료 기준: %s\n"
+              "완료된 단계: %s\n"
+              "수정 사유(실무자 발견 또는 검수 실패): %s\n"
+              "기존 잔여 계획: %s\n\n"
+              "잔여 계획을 재설계하라. JSON만: {\"milestones\": [{\"n\": %d부터, \"deps\": [], "
+              "\"spec\": \"자족적 지시 (재시도 안전하게)\", \"accept\": \"검증 가능한 완료 기준\"}], "
+              "\"note\": \"뭘 왜 바꿨는지 한 줄\"}\n"
+              "발견이 '이미 완료됨'이면 해당 단계를 빼고, '불가능'이면 대체 접근으로, 0~4개 단계로.") % (
+        DISTILL_MARKER, pj["goal"][:200], pj["acceptance"][:200],
+        "; ".join("%d) %s" % (m["n"], m["spec"][:60]) for m in done) or "(없음)",
+        trigger[:400],
+        "; ".join("%d) %s" % (m["n"], m["spec"][:60]) for m in rest) or "(없음)",
+        (max((m["n"] for m in done), default=0) + 1))
+    text, rc = run_claude(prompt, cfg["deep_model"], cfg, "project-replan", timeout=300, max_out=4000)
+    m = re.search(r"\{.*\}", text or "", re.S)
+    if rc != 0 or not m:
+        return False
+    try:
+        rj = json.loads(m.group(0))
+    except json.JSONDecodeError:
+        return False
+    new_ms = [{"n": x.get("n", i + 1), "deps": [d for d in (x.get("deps") or []) if isinstance(d, int)],
+               "spec": x["spec"], "accept": x.get("accept", ""), "status": "pending",
+               "attempts": 0, "work_file": "", "proof": ""}
+              for i, x in enumerate(rj.get("milestones", [])) if x.get("spec")]
+    pj["milestones"] = done + new_ms
+    project_log(pj, "재계획: %s (잔여 %d단계)" % (rj.get("note", "")[:80], len(new_ms)))
+    metric("project_replan", pj["title"])
+    return True
+
+
 def project_tick(cfg):
-    """상태머신 한 박자 — 스윕마다 호출. 파견 완료 감지→검수→다음 단계/에스컬레이션."""
+    """상태머신 한 박자 — 스윕마다. 그래프 순회: 준비된 단계 동시 파견(상한 3) → 검수 → 진행/재계획/에스컬레이션."""
     if not PROJECTS_DIR.exists():
         return
     for pf in PROJECTS_DIR.glob("p-*.json"):
         pj = load_json(pf, {})
         if pj.get("status") != "running":
             continue
-        for ms in pj["milestones"]:
-            if ms["status"] == "done":
+        # 1) 검수 대기 처리 (발견 감지 포함)
+        for ms in [m for m in pj["milestones"] if m["status"] == "verifying"]:
+            head = ""
+            if ms.get("work_file") and Path(ms["work_file"]).exists():
+                head = Path(ms["work_file"]).read_text(encoding="utf-8")[:2000]
+            if "[발견]" in head:
+                found = head.split("[발견]", 1)[1][:400]
+                project_log(pj, "%d단계 실무자 발견 보고 — 재계획 시도" % ms["n"])
+                ms["status"] = "superseded"
+                if not project_replan(pj, "실무자 발견: " + found, cfg):
+                    pj["status"] = "escalated"
+                    project_log(pj, "재계획 실패 — 형님 판단 필요")
+                    notify("가리 프로젝트 — 발견 보고", "%s: %s" % (pj["title"], found[:80]), cfg, urgent=True)
                 continue
-            if ms["status"] == "pending":
-                project_dispatch(pj, ms, cfg)
-                break
-            if ms["status"] == "running":
-                # 완료는 do --mark가 verifying으로 바꿔줌. 40분 넘게 무소식이면 유실 간주
-                try:
-                    age = (datetime.now().astimezone()
-                           - datetime.fromisoformat(ms.get("dispatched", now_iso()))).total_seconds()
-                except ValueError:
-                    age = 0
-                if age > 2400:
-                    ms["status"] = "verifying"
-                    project_log(pj, "%d단계 응답 지연 — 강제 검수 진입" % ms["n"])
-                break
-            if ms["status"] == "verifying":
-                ok, proof = project_verify(pj, ms, cfg)
-                if ok:
-                    ms["status"] = "done"
-                    ms["proof"] = proof
-                    project_log(pj, "%d단계 검수 통과 — %s" % (ms["n"], proof))
-                    metric("project_ms_done", pj["title"])
+            ok, proof = project_verify(pj, ms, cfg)
+            if ok:
+                ms["status"] = "done"
+                ms["proof"] = proof
+                project_log(pj, "%d단계 검수 통과 — %s" % (ms["n"], proof))
+                metric("project_ms_done", pj["title"])
+            else:
+                ms["attempts"] += 1
+                project_log(pj, "%d단계 검수 불통과(%d회) — %s" % (ms["n"], ms["attempts"], proof))
+                if ms["attempts"] >= 2:
+                    pj["status"] = "escalated"
+                    project_log(pj, "에스컬레이션 — 형님 판단 필요")
+                    notify("가리 프로젝트 — 막힘", "%s %d단계: %s" % (pj["title"], ms["n"], proof[:60]), cfg, urgent=True)
+                elif project_replan(pj, "%d단계 검수 실패: %s" % (ms["n"], proof), cfg):
+                    pass   # 실패는 계획의 신호 — 같은 지시 재파견보다 재설계 우선
                 else:
-                    ms["attempts"] += 1
-                    project_log(pj, "%d단계 검수 불통과(%d회) — %s" % (ms["n"], ms["attempts"], proof))
-                    if ms["attempts"] >= 2:
-                        pj["status"] = "escalated"
-                        project_log(pj, "에스컬레이션 — 형님 판단 필요")
-                        notify("가리 프로젝트 — 막힘", "%s %d단계: %s" % (pj["title"], ms["n"], proof[:60]), cfg, urgent=True)
-                    else:
-                        ms["spec"] += "\n[재시도 %d — 이전 시도 불충족 사유: %s. 이 부분을 반드시 해결하라]" % (
-                            ms["attempts"], proof)
-                        ms["status"] = "pending"
-                break
-        else:
+                    ms["spec"] += "\n[재시도 %d — 이전 시도 불충족 사유: %s. 이 부분을 반드시 해결하라]" % (
+                        ms["attempts"], proof)
+                    ms["status"] = "pending"
+        # 2) 유실 방어
+        for ms in [m for m in pj["milestones"] if m["status"] == "running"]:
+            try:
+                age = (datetime.now().astimezone()
+                       - datetime.fromisoformat(ms.get("dispatched", now_iso()))).total_seconds()
+            except ValueError:
+                age = 0
+            if age > 2400:
+                ms["status"] = "verifying"
+                project_log(pj, "%d단계 응답 지연 — 강제 검수 진입" % ms["n"])
+        # 3) 그래프 순회 파견 — 준비된 것 전부, 동시 3개 상한
+        if pj.get("status") == "running":
+            active = len([m for m in pj["milestones"] if m["status"] in ("running", "verifying")])
+            for ms in [m for m in pj["milestones"] if m["status"] == "pending"]:
+                if active >= 3:
+                    break
+                if _ms_ready(pj, ms):
+                    project_dispatch(pj, ms, cfg)
+                    active += 1
+        if all(m["status"] in ("done", "superseded") for m in pj["milestones"]) \
+                and pj.get("status") == "running":
             pj["status"] = "done"
             project_log(pj, "프로젝트 완료 — 전 단계 검수 통과")
             append_cards([{"id": hashlib.md5(("proj" + pj["id"]).encode()).hexdigest()[:8],
