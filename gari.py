@@ -594,6 +594,17 @@ def _sweep_inner(args, cfg):
         closed += 1
         receipts.append((project, cards))
 
+    # 아침 보고 만회 — 9시에 맥이 꺼져 있었으면 예약이 증발한다 (잠자기는 자동 만회되지만 종료는 아님)
+    try:
+        now_dt = datetime.now()
+        rp = REPORTS_DIR / (now_dt.strftime("%Y-%m-%d") + ".md")
+        if (not rp.exists()
+                and now_dt.hour * 60 + now_dt.minute >= cfg["report_hour"] * 60 + 30):
+            metric("morning_makeup")
+            cmd_report(["--morning"])   # 부팅이 늦었어도 그날 보고는 반드시 온다
+    except Exception as e:
+        errors.append("아침 보고 만회 실패: %s" % str(e)[:120])
+
     # 가리와의 대화도 1급 기억이다 — 유휴 지난 챗 세션을 증류해 카드로
     if CHATS_DIR.exists():
         for sp in CHATS_DIR.glob("*.jsonl"):

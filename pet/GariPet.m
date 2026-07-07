@@ -136,6 +136,23 @@ static int sheetRowFor(GariMood m) {
 @interface KeyableWindow : NSWindow
 @end
 @implementation KeyableWindow
+// 메뉴바 없는 앱의 표준 편집 단축키 복원 — ⌘C/V/X/A/Z가 퍼스트리스폰더로 흐르게
+- (BOOL)performKeyEquivalent:(NSEvent *)e {
+    if (e.modifierFlags & NSEventModifierFlagCommand) {
+        NSString *k = e.charactersIgnoringModifiers.lowercaseString;
+        SEL sel = NULL;
+        if ([k isEqualToString:@"c"]) sel = @selector(copy:);
+        else if ([k isEqualToString:@"v"]) sel = @selector(paste:);
+        else if ([k isEqualToString:@"x"]) sel = @selector(cut:);
+        else if ([k isEqualToString:@"a"]) sel = @selector(selectAll:);
+        else if ([k isEqualToString:@"z"])
+            sel = (e.modifierFlags & NSEventModifierFlagShift)
+                ? NSSelectorFromString(@"redo:") : NSSelectorFromString(@"undo:");
+        if (sel && [NSApp sendAction:sel to:nil from:self]) return YES;
+    }
+    return [super performKeyEquivalent:e];
+}
+
 - (BOOL)canBecomeKeyWindow { return YES; }
 - (void)cancelOperation:(id)sender { [self orderOut:nil]; }
 - (void)keyDown:(NSEvent *)event {
