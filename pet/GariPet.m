@@ -343,6 +343,7 @@ static NSView *hudRowCard(CGFloat width) {
 @property BOOL showRecords;                  // 오늘 기록 펼침
 @property BOOL showSuggestions;              // 가리 정리 제안 펼침
 @property BOOL showWorkItems;                // 실무급 미결 펼침
+@property BOOL showDetail;                   // 스테이크 아래 상세(기존 화면) 펼침
 @property int wiggleFrames;                  // 씰룩 남은 프레임
 @property int glideFrames;                   // 유영 남은 프레임
 @property CGFloat rubAccum;                  // 부비부비 게이지
@@ -1055,6 +1056,17 @@ static NSString *hudTimeShort(NSString *iso) {
     self.hudGrip.onResizeEnd = ^{ [weakSelf hudResizeEnded]; };
 }
 
+- (void)toggleDetail:(id)s { self.showDetail = !self.showDetail; [self buildHud]; }
+
+- (void)stakeTapped:(NSClickGestureRecognizer *)g {
+    NSString *action = g.view.identifier;
+    if ([action isEqualToString:@"chat"]) {
+        self.hudMode = 1;
+        [self buildHud];
+    }
+    [self.hudWindow makeFirstResponder:self.hudInput];
+}
+
 - (void)focusInput:(id)sender {
     [self.hudWindow makeFirstResponder:self.hudInput];
 }
@@ -1128,6 +1140,82 @@ static NSString *hudTimeShort(NSString *iso) {
         [doc addSubview:l];
         y += l.frame.size.height + 8;
     };
+
+    // ═══ 새 문법: 가리의 한 줄 + 오늘 중요한 것 3개 (결과절) — 화면의 존재 이유
+    NSDictionary *stakes = [d[@"stakes"] isKindOfClass:NSDictionary.class] ? d[@"stakes"] : @{};
+    NSArray *stakeList = [stakes[@"stakes"] isKindOfClass:NSArray.class] ? stakes[@"stakes"] : @[];
+    if ([stakes[@"brief"] length]) {
+        NSTextField *br = hudLabel(stakes[@"brief"],
+            [NSFont systemFontOfSize:15 weight:NSFontWeightMedium],
+            [NSColor colorWithCalibratedWhite:0.96 alpha:1], 0, contentW - 8);
+        br.frame = NSMakeRect(pad + 4, y + 6, contentW - 8, br.frame.size.height);
+        [doc addSubview:br];
+        y += br.frame.size.height + 24;
+    }
+    NSArray *nums = @[@"①", @"②", @"③"];
+    for (NSUInteger si = 0; si < MIN(stakeList.count, 3u); si++) {
+        NSDictionary *st = stakeList[si];
+        NSString *action = st[@"action"] ?: @"";
+        BOOL hasBtns = [action isEqualToString:@"resolve"] && [st[@"id"] length];
+        CGFloat tw2 = contentW - 28 - (hasBtns ? 66 : 0);
+        NSTextField *gain = hudLabel(st[@"gain"],
+            [NSFont systemFontOfSize:13.5 weight:NSFontWeightSemibold], fg, 0, tw2 - 26);
+        NSString *subT = [action isEqualToString:@"input"]
+            ? [NSString stringWithFormat:@"%@  ↳ 아래 입력창에 답하면 됩니다", st[@"label"] ?: @""]
+            : ([action isEqualToString:@"chat"]
+               ? [NSString stringWithFormat:@"%@  ↳ 눌러서 대화로", st[@"label"] ?: @""]
+               : (st[@"label"] ?: @""));
+        NSTextField *lb = hudLabel(subT, [NSFont systemFontOfSize:11.5], dim, 2, tw2 - 26);
+        CGFloat rh = 13 + gain.frame.size.height + 5 + lb.frame.size.height + 13;
+        NSView *row = hudRowCard(contentW);
+        row.frame = NSMakeRect(pad, y, contentW, rh);
+        NSTextField *no = hudLabel(nums[si], [NSFont systemFontOfSize:14 weight:NSFontWeightBold],
+                                   accent, 1, 22);
+        no.frame = NSMakeRect(13, rh - 14 - no.frame.size.height, 22, no.frame.size.height);
+        [row addSubview:no];
+        gain.frame = NSMakeRect(38, rh - 13 - gain.frame.size.height, tw2 - 26, gain.frame.size.height);
+        [row addSubview:gain];
+        lb.frame = NSMakeRect(38, 12, tw2 - 26, lb.frame.size.height);
+        [row addSubview:lb];
+        if (hasBtns) {
+            NSButton *done = flatBtn(@"완료", accent, self, @selector(resolvePending:));
+            done.identifier = st[@"id"];
+            done.frame = NSMakeRect(contentW - 66, rh / 2 + 2, 52, 23);
+            [row addSubview:done];
+            NSButton *later = flatBtn(@"나중에", dim, self, @selector(snoozePending:));
+            later.identifier = st[@"id"];
+            later.frame = NSMakeRect(contentW - 66, rh / 2 - 25, 52, 23);
+            [row addSubview:later];
+        } else {
+            gain.identifier = action;   // input→포커스 / chat→대화 탭
+            NSClickGestureRecognizer *tap = [[NSClickGestureRecognizer alloc]
+                initWithTarget:self action:@selector(stakeTapped:)];
+            [gain addGestureRecognizer:tap];
+            NSClickGestureRecognizer *tap2 = [[NSClickGestureRecognizer alloc]
+                initWithTarget:self action:@selector(stakeTapped:)];
+            lb.identifier = action;
+            [lb addGestureRecognizer:tap2];
+        }
+        [doc addSubview:row];
+        y += rh + 10;
+    }
+    if (stakeList.count) {
+        NSNumber *tot = [stakes[@"total"] isKindOfClass:NSNumber.class] ? stakes[@"total"] : @0;
+        NSButton *more = [NSButton buttonWithTitle:
+            [NSString stringWithFormat:@"나머지 %@건은 가리가 보고 있습니다 · 상세 %@",
+             tot, self.showDetail ? @"▾" : @"▸"]
+            target:self action:@selector(toggleDetail:)];
+        more.bordered = NO;
+        more.controlSize = NSControlSizeSmall;
+        more.font = [NSFont systemFontOfSize:11.5];
+        more.contentTintColor = dim;
+        more.alignment = NSTextAlignmentLeft;
+        more.frame = NSMakeRect(pad, y + 4, contentW, 24);
+        [doc addSubview:more];
+        y += 36;
+    }
+
+    if (self.showDetail || !stakeList.count) {   // 상세 = 기존 화면 전체 (스테이크 없으면 항상)
 
     // ═══ 그룹 1: 오늘 — 한 칸·참견·질문 합본 카드 (아침 산출, 하루 1회)
     NSDictionary *nsD = d[@"next_step"];
@@ -1453,6 +1541,8 @@ static NSString *hudTimeShort(NSString *iso) {
         }
         y += 8;
     }
+
+    }   // 상세 게이트 끝
 
     doc.frame = NSMakeRect(0, 0, W, y + 12);
     CGFloat dashOldY = self.hudScroll.contentView.bounds.origin.y;
@@ -2168,6 +2258,15 @@ static void renderSnapshots(NSString *outDir) {
                          @"text": @"화면 기록 권한 설정 — 사용자만 가능한 작업"}],
         @"freshness": @{@"sweep_interval_min": @10, @"report_hour": @9,
                          @"morning_ts": @"2026-07-06T09:00:12", @"triage_ts": @"2026-07-06T09:00:44"},
+        @"stakes": @{@"brief": @"형님, 오늘은 배포 승인 하나가 전부를 막고 있고 — 나머지는 제가 정리해뒀습니다.",
+                     @"total": @126,
+                     @"stakes": @[
+            @{@"gain": @"승인하면 105개 테스트가 배포로 풀립니다", @"label": @"게임잼 서버 배포 승인",
+              @"action": @"resolve", @"id": @"ab12cd34"},
+            @{@"gain": @"답하면 가리 기억 검색의 축이 확정됩니다", @"label": @"검색할 때 주로 뭘 찾으세요?",
+              @"action": @"input", @"id": @""},
+            @{@"gain": @"놔두면 review-board 방향이 이번 주도 표류합니다", @"label": @"열린 논의 이어가기",
+              @"action": @"chat", @"id": @""}]},
         @"compass": @[@{@"project": @"solo-game-launch", @"identity": @"사내 게임 대회 출품용 모바일 채굴 게임",
                         @"next": @"대회 공식 심사 기준·마감일 확인 — 유일한 외부 블로커", @"activity": @29},
                       @{@"project": @"review-board", @"identity": @"크리에이티브 리뷰·협업 보드 도구",

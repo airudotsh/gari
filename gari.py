@@ -898,6 +898,10 @@ def cmd_report(args):
     except (RuntimeError, json.JSONDecodeError) as e:
         report += "\n## 큐 정리 제안\n\n- 검토 실패: %s\n" % str(e)[:100]
 
+    try:
+        compose_stakes(cfg)
+    except Exception:
+        pass
     report = personalize(report, cfg)
     out = REPORTS_DIR / (datetime.now().strftime("%Y-%m-%d") + ".md")
     out.write_text(report, encoding="utf-8")
@@ -1949,6 +1953,7 @@ def hud_data(cfg):
                         if l.startswith("오늘의 훈련:")), ""),
         "triage": load_json(TRIAGE_PATH, {}),
         "compass": _hud_compass(cards),
+        "stakes": load_json(STAKES_PATH, {}),
         "freshness": {
             "sweep_interval_min": cfg["sweep_interval_min"],
             "report_hour": cfg["report_hour"],
@@ -2089,12 +2094,9 @@ def run_triage(cfg):
               ' "done_like": [{"id": "...", "evidence": "완료로 보이는 근거 — 반드시 기록에서 인용"}],\n'
               ' "dupes": [{"keep": "...", "drop": ["..."], "why": "..."}],\n'
               ' "snooze": [{"id": "...", "days": 7, "why": "지금 결정할 수 없는 이유"}],\n'
-              ' "conflicts": [{"ids": ["...", "..."], "why": "서로 어긋나는 지점", "ask": "어느 쪽이 맞는지 묻는 한 문장"}],\n'
-              ' "kinds": {"<모든 미결 id>": "direction 또는 work"}}\n'
-              "kinds 기준: direction = 방향·우선순위·취향·권한·정책 — 사용자만 정할 수 있는 것. "
-              "work = 구현·검증·조사·수정 — AI 에이전트가 파견받아 처리할 수 있는 것.\n"
+              ' "conflicts": [{"ids": ["...", "..."], "why": "서로 어긋나는 지점", "ask": "어느 쪽이 맞는지 묻는 한 문장"}]}\n'
               "규칙: **서문·설명·사고과정 절대 금지 — JSON 한 덩어리만 출력** (전체 800자 이내 목표). "
-              "why/evidence/ask는 각각 한 문장 상한. kinds는 입력된 미결 id에 대해서만. "
+              "why/evidence/ask는 각각 한 문장 상한. "
               "근거 없는 done_like 금지(확신 없으면 비워라). now는 정확히 1건 — 임팩트와 차단 해제 기준. "
               "dupes는 같은 일을 가리키는 항목만. conflicts는 결정 카드끼리 **서로 모순**되는 쌍만 — "
               "정정(correction) 카드가 이미 덮은 모순, 단순한 계획 변경·진화는 제외. 모르면 빈 배열.\n\n"
@@ -2114,6 +2116,29 @@ def run_triage(cfg):
     if data.get("now") and data["now"].get("id") not in valid:
         data["now"] = None
     data["done_like"] = [d for d in data.get("done_like", []) if d.get("id") in valid and d.get("evidence")]
+    # 실측 검증: 프로젝트 경로가 실재하면 검증 일꾼이 저장소에서 증거를 직접 확인 (말→코드 검증)
+    pmap = {c.get("id"): c for c in pends if c.get("id")}
+    for d in data["done_like"][:5]:
+        c = pmap.get(d["id"])
+        proj = str(c.get("project", "")) if c else ""
+        repo = Path(proj).expanduser() if proj.startswith("/") else (Path.home() / proj)
+        if not repo.exists() or not repo.is_dir():
+            d["verified"] = None   # 검증 불가 유형 — 기록상 제안으로만
+            continue
+        set_ask_status("실측 검증 중 — %s" % repo.name)
+        vprompt = ("%s 검증 임무. 미결: \"%s\"\n완료 주장 근거: \"%s\"\n"
+                   "이 저장소에서 실제로 완료됐는지 파일·코드·설정을 Read/Glob/Grep으로 확인하라. "
+                   "출력은 JSON 하나만: {\"verified\": true|false, \"proof\": \"파일명:확인내용 한 줄\"}") % (
+            DISTILL_MARKER, c["text"][:120], d["evidence"][:120])
+        vtext, vrc = run_claude_stream(vprompt, cfg["ask_model"], cfg, "verify",
+                                       "Read,Glob,Grep", timeout=150, cwd=str(repo))
+        try:
+            vm = re.search(r"\{.*\}", vtext, re.S)
+            vj = json.loads(vm.group(0)) if vm else {}
+            d["verified"] = bool(vj.get("verified"))
+            d["proof"] = str(vj.get("proof", ""))[:100]
+        except (json.JSONDecodeError, AttributeError):
+            d["verified"] = None
     data["snooze"] = [s for s in data.get("snooze", []) if s.get("id") in valid]
     all_ids = {c.get("id") for c in read_cards(7)} - {None}
     data["conflicts"] = [c for c in data.get("conflicts", [])
@@ -2134,9 +2159,20 @@ def run_triage(cfg):
                        "text": "(가리가 재움 %s까지) %s — %s" % (until, c["text"][:50], s.get("why", "")[:60])}])
         slept.append("%s (%d일: %s)" % (c["text"][:40], days, s.get("why", "")[:40]))
     data["slept"] = slept
-    kinds = data.get("kinds") or {}
-    data["kinds"] = {k: v for k, v in kinds.items()
-                     if k in valid and v in ("direction", "work")}
+    # 분류는 별도 경량 콜 — 판정과 격리 (한쪽이 죽어도 다른 쪽은 산다)
+    data["kinds"] = {}
+    try:
+        kp = ("%s 분류 임무. 각 미결을 direction(방향·우선순위·취향·권한 — 사용자만 결정) 또는 "
+              "work(구현·검증·조사 — AI가 파견받아 처리 가능)로. JSON 하나만: {\"id\": \"direction|work\", ...}\n\n%s") % (
+            DISTILL_MARKER, plist_txt)
+        ktext, krc = run_claude(kp, cfg["ask_model"], cfg, "triage-kinds",
+                                timeout=cfg["distill_timeout_sec"], max_out=3000)
+        km = re.search(r"\{.*\}", ktext, re.S)
+        kinds = json.loads(km.group(0)) if km else {}
+        data["kinds"] = {k: v for k, v in kinds.items()
+                         if k in valid and v in ("direction", "work")}
+    except (json.JSONDecodeError, AttributeError, RuntimeError):
+        pass
     save_json(TRIAGE_PATH, data)
     return data
 
@@ -2153,7 +2189,8 @@ def triage_summary_lines(data, pends_by_id):
     for d in data.get("done_like", []):
         c = pends_by_id.get(d["id"])
         if c:
-            lines.append("끝난 듯 (확인 후 `gari resolve %s`): %s — 근거: %s" % (c["id"], c["text"][:50], d["evidence"][:80]))
+            tag = ("실측 확인 — " + d.get("proof", "")[:60]) if d.get("verified")                   else ("실측 불일치!" if d.get("verified") is False else "기록상")
+            lines.append("끝난 듯 (%s, `gari resolve %s`): %s" % (tag, c["id"], c["text"][:50]))
     for d in data.get("dupes", []):
         drops = ", ".join(d.get("drop", []))
         lines.append("중복: %s 가 대표, %s 는 `gari resolve` 로 접기 — %s" % (d.get("keep"), drops, d.get("why", "")[:60]))
@@ -2163,6 +2200,57 @@ def triage_summary_lines(data, pends_by_id):
         lines.append("기록 모순 의심 (%s): %s → %s (답하시면 정정 카드로 덮습니다)" % (
             "·".join(cf.get("ids", [])), cf.get("why", "")[:70], cf.get("ask", "")))
     return lines
+
+
+STAKES_PATH = STORE / "stakes.json"
+
+
+def compose_stakes(cfg):
+    """현황판 상단의 존재 이유 — 오늘 나에게 중요한 것 3개를 결과절 문법으로."""
+    tri = load_json(TRIAGE_PATH, {})
+    pends = {c.get("id"): c for c in open_pendings(read_cards_all()) if c.get("id")}
+    now_c = pends.get((tri.get("now") or {}).get("id"))
+    question = (STORE / "question.txt").read_text(encoding="utf-8").strip()         if (STORE / "question.txt").exists() else ""
+    approvals = load_json(GARI_HOME / "pending-approvals.json", [])
+    mentor_line = ""
+    if MENTOR_PATH.exists():
+        for l in MENTOR_PATH.read_text(encoding="utf-8").splitlines():
+            if l.startswith("오늘의 훈련:"):
+                mentor_line = l.split(":", 1)[1].strip()
+    total = len(pends)
+    prompt = ("%s 너는 가리 — 형님의 하루에서 정말 중요한 것 3개만 고르는 편집장이다.\n"
+              "재료:\n- 최우선 미결: %s (이유: %s)\n- 가리의 질문: %s\n- 결재 대기: %s\n"
+              "- 멘토 훈련: %s\n- 그 외 미결 총 %d건\n\n"
+              "JSON만 출력 (서문 금지):\n"
+              '{"brief": "오늘 상황 한 문장 — 형님께 말 걸듯", "stakes": [\n'
+              ' {"gain": "결과절 — <하면/답하면/놔두면> ~가 <풀립니다/확정됩니다/표류합니다>", '
+              '"label": "행동 한 줄", "action": "resolve|input|chat", "id": "미결ID(있으면)"}]}\n'
+              "규칙: stakes는 정확히 3개. gain은 형님 삶의 변화로 말하라 (시스템 용어 금지). "
+              "재료가 비면 그 자리는 미결 중 임팩트 큰 것으로 채워라.") % (
+        DISTILL_MARKER,
+        (now_c or {}).get("text", "(없음)")[:100], (tri.get("now") or {}).get("why", "")[:80],
+        question[:120] or "(없음)", (approvals[0][:80] if approvals else "(없음)"),
+        mentor_line[:80] or "(없음)", total)
+    text, rc = run_claude(prompt, cfg["ask_fallback_model"], cfg, "stakes",
+                          timeout=cfg["do_timeout_sec"], max_out=8000)
+    try:
+        m = re.search(r"\{.*\}", text, re.S)
+        data = json.loads(m.group(0))
+        assert isinstance(data.get("stakes"), list) and data.get("brief")
+    except (AttributeError, json.JSONDecodeError, AssertionError):
+        # 결정적 폴백 — 재료 그대로
+        data = {"brief": "정리는 끝났습니다 — 아래 세 개만 보시면 됩니다.",
+                "stakes": [s for s in [
+                    ({"gain": "결정하면 막힌 것이 풀립니다", "label": (now_c or {}).get("text", "")[:60],
+                      "action": "resolve", "id": (now_c or {}).get("id", "")} if now_c else None),
+                    ({"gain": "답하면 가리의 빈칸이 채워집니다", "label": question[:60],
+                      "action": "input", "id": ""} if question else None),
+                    ({"gain": "결재하면 다음 단계가 열립니다", "label": approvals[0][:60],
+                      "action": "input", "id": ""} if approvals else None)] if s][:3]}
+    data["total"] = total
+    data["ts"] = now_iso()
+    save_json(STAKES_PATH, data)
+    return data
 
 
 def cmd_triage(args):
@@ -2178,6 +2266,10 @@ def cmd_triage(args):
         return 0
     pends = {c["id"]: c for c in open_pendings(read_cards_all()) if c.get("id")}
     lines = triage_summary_lines(data, pends)
+    try:
+        compose_stakes(cfg)
+    except Exception:
+        pass
     print("미결 %d건 검토:" % len(pends))
     for line in lines:
         print(" · " + line)
