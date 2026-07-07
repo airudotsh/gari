@@ -135,7 +135,7 @@ def main():
     polluted = [c for c in g_cards if c.get("tool") == "gari-chat"
                 and re.search(r"(배터리|journey|시뮬레이션)", c.get("text", ""))]
     grade("D1 자기오염(테스트 발화 카드화)", "오염 %d건" % len(polluted), 0,
-          must=[r"오염 0건"] if not polluted else [r"^$"])
+          must=[r"오염 0건"] if not polluted else [r"^$"], min_len=1)
 
     # ── E. 복원력 ──
     cfg = dict(g.load_config())

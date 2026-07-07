@@ -74,12 +74,21 @@ def now_iso():
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-def notify(title, message, cfg=None):
-    """macOS 알림. cfg.notify=false면 stdout으로만."""
+def strip_code_coords(s):
+    """청중 보호 — 검증 일꾼이 인용한 코드 좌표(file.py:123-456)를 사용자 표면에서 제거."""
+    return re.sub(r"(\.(?:py|m|md|txt|json|sh|js|ts|html|css|swift|yml|yaml))(:\d+(?:[-–~]\d+)?)",
+                  r"\1", s or "")
+
+
+def notify(title, message, cfg=None, urgent=False):
+    """macOS 알림. cfg.notify=false면 stdout으로만.
+    urgent=True는 '개입 필요' 채널 — 항상 소리, ⚠ 접두 (완료·정보성 알림과 구분)."""
     if cfg is not None and not cfg.get("notify", True):
         print("[알림 생략] %s: %s" % (title, message))
         return
-    sound = (cfg or {}).get("notify_sound", "")
+    if urgent:
+        title = "⚠ " + title
+    sound = "Basso" if urgent else (cfg or {}).get("notify_sound", "")
     script = 'display notification "{}" with title "{}"{}'.format(
         message.replace('"', "'"), title.replace('"', "'"),
         ' sound name "%s"' % sound if sound else "")
@@ -457,7 +466,7 @@ def load_cursors_strict():
         with open(CURSORS_PATH, encoding="utf-8") as f:
             return json.load(f)
     except json.JSONDecodeError as e:
-        notify("가리 — 이상", "커서 파일 손상 — 스윕 중단. store/cursors.json 확인 필요.")
+        notify("가리 — 이상", "커서 파일 손상 — 스윕 중단. store/cursors.json 확인 필요.", urgent=True)
         raise RuntimeError("cursors.json 손상: %s" % e)
 
 
@@ -553,7 +562,7 @@ def _sweep_inner(args, cfg):
             errors.append("%s 파싱 실패: %s" % (path.name, e))
             n = health_incr("parse_failures_%s" % tool)
             if n >= cfg["parse_failure_alert_after"]:
-                notify("가리 — 이상", "%s 로그 파싱 연속 실패 %d회. 형식 변경 의심." % (tool, n), cfg)
+                notify("가리 — 이상", "%s 로그 파싱 연속 실패 %d회. 형식 변경 의심." % (tool, n), cfg, urgent=True)
             continue
         if skipped:
             health_incr("skipped_lines")
@@ -677,6 +686,10 @@ def _sweep_inner(args, cfg):
         project_tick(cfg)  # 진행 중 프로젝트 상태머신 한 박자 — 새 카드 유무와 무관하게 매 스윕
     except Exception as e:
         errors.append("project-tick: %s" % e)
+    try:
+        collect_pulse(cfg)  # git 실측 — 말없이 코드로만 진행된 일도 본다
+    except Exception as e:
+        errors.append("pulse: %s" % e)
     if errors:
         print("[sweep 오류]\n" + "\n".join(errors), file=sys.stderr)
     print("sweep 완료: 닫은 묶음 %d, 오류 %d" % (closed, len(errors)))
@@ -689,9 +702,17 @@ def rebuild_briefing(cfg):
     cards = read_cards(cfg["briefing_days"])
     pend = open_pendings(cards)
     dec = [c for c in cards if c["type"] == "decision"][-cfg["briefing_max_items"]:]
+    pulse = load_json(PULSE_PATH, {}).get("projects", {})
     lines = ["<가리 브리핑 — %s 갱신>" % now_iso(),
              "[역할 경계] 이 브리핑은 비서 '가리'가 제공하는 맥락 자료다. 이걸 읽는 너(Claude/Codex/gjc 등)는 가리가 아니다 —",
              "가리의 페르소나(형님 호칭, 참견, 보고 습관)를 흉내내지 마라. 너는 본연의 실무 도구로 일하고, 이 내용은 참고만 하라."]
+    if pulse:
+        act = sorted(pulse.items(), key=lambda kv: (kv[1]["commits_24h"], kv[1]["last_commit"]), reverse=True)[:5]
+        lines.append("프로젝트 실측 (git — 대화에 없어도 이게 사실):")
+        for name, pj in act:
+            lines.append("- %s: 커밋 %s%s%s" % (name, pj["last_commit"],
+                         " · 24h %d건" % pj["commits_24h"] if pj["commits_24h"] else "",
+                         " · 미커밋 %d" % pj["dirty"] if pj["dirty"] else ""))
     if dec:
         lines.append("최근 결정:")
         for c in dec:
@@ -873,7 +894,7 @@ def cmd_report(args):
         report += ("\n> **저 잊히고 있습니다, 형님.** 3일째 브리핑도 질문도 0회예요. "
                    "바쁘셨다면 좋고요 — 다만 이 보고 하나만 열어주시면 저는 삽니다. "
                    "가리가 성가셔진 거라면 그것도 말해주세요, 고치겠습니다.\n")
-        notify("가리 — 잊힘 감지", "형님, 3일째 조용하네요. 아침 보고 한 번만 열어주세요.", cfg)
+        notify("가리 — 잊힘 감지", "형님, 3일째 조용하네요. 아침 보고 한 번만 열어주세요.", cfg, urgent=True)
 
     # 가리가 어제 대신 한 일 — 측정 루프의 표면 (기준선: 재설명 없이 굴러간 양)
     ms = metrics_summary(1)
@@ -903,6 +924,17 @@ def cmd_report(args):
             report += "\n## 큐 정리 제안 (가리가 검토함)\n\n" + "\n".join("- " + l for l in tlines) + "\n"
     except (RuntimeError, json.JSONDecodeError) as e:
         report += "\n## 큐 정리 제안\n\n- 검토 실패: %s\n" % str(e)[:100]
+
+    pulse = load_json(PULSE_PATH, {}).get("projects", {})
+    if pulse:
+        report += "\n## 프로젝트 실측 펄스 (git)\n\n"
+        for name, pj in sorted(pulse.items(), key=lambda kv: kv[1]["last_commit"], reverse=True)[:7]:
+            mark_ = "●" if pj["commits_24h"] else ("◐" if pj["dirty"] else "○")
+            report += "- %s %s — 커밋 %s · 24h %d건 · 미커밋 %d\n" % (
+                mark_, name, pj["last_commit"], pj["commits_24h"], pj["dirty"])
+        stale = [n for n, pj in pulse.items() if pj["dirty"] >= 5 and not pj["commits_24h"]]
+        if stale:
+            report += "- ⚠ 미커밋 변경이 쌓인 채 멈춘 곳: %s — 유실 위험, 커밋하거나 버리세요\n" % ", ".join(stale[:3])
 
     try:
         compose_stakes(cfg)
@@ -1000,6 +1032,97 @@ def compose_reflection(cards, cfg):
     if rc != 0 or not (text or "").strip():
         return "- 반성 산출 실패 (모델 호출 오류) — 다음 주간 보고에서 재시도"
     return text.strip()
+
+
+PULSE_PATH = STORE / "pulse.json"
+
+
+def _decode_claude_dir(name):
+    """~/.claude/projects/ 폴더명(-Users-x-y)을 실경로로.
+    인코딩이 '/'와 '-'를 모두 '-'로 뭉개므로, 실존 폴더를 좌→우 탐욕 매칭으로 복원한다
+    (brain-clone처럼 이름에 하이픈이 든 프로젝트가 이 함수의 존재 이유)."""
+    if not name.startswith("-"):
+        return ""
+    parts = name[1:].split("-")
+    path = Path("/")
+    i = 0
+    while i < len(parts):
+        seg, j = parts[i], i + 1
+        while not (path / seg).exists() and j < len(parts):
+            seg, j = seg + "-" + parts[j], j + 1
+        if not (path / seg).exists():
+            return ""
+        path, i = path / seg, j
+    return str(path)
+
+
+def collect_pulse(cfg):
+    """프로젝트 폴더의 git 실측 — 대화에 안 나온 코드 작업도 본다 (오르카 절도 1호의 가리식).
+    수집: 마지막 커밋(시각·제목), 24시간 커밋 수, 미커밋 변경 수, 브랜치. 스윕마다 갱신."""
+    dirs = {}
+    claude_proj = Path.home() / ".claude" / "projects"
+    if claude_proj.exists():
+        for d in claude_proj.iterdir():
+            real = _decode_claude_dir(d.name)
+            if real and Path(real).is_dir():
+                dirs[Path(real).name] = real
+    for extra in (Path.home() / "gari", Path.home() / "roadmap", Path.home() / "brain-clone"):
+        if extra.is_dir():
+            dirs.setdefault(extra.name, str(extra))
+    pulse = {}
+    for name, path in dirs.items():
+        if name in NOISE_PROJECTS or not (Path(path) / ".git").exists():
+            continue
+        def _git(*args):
+            try:
+                r = subprocess.run(["git", "-C", path] + list(args),
+                                   capture_output=True, text=True, timeout=10)
+                return r.stdout.strip() if r.returncode == 0 else ""
+            except Exception:
+                return ""
+        last = _git("log", "-1", "--format=%ci|%s")
+        if not last:
+            continue
+        ts, _, subject = last.partition("|")
+        pulse[canonical_project(name)] = {
+            "dir": path,
+            "last_commit": ts[:16],
+            "last_subject": subject[:80],
+            "commits_24h": len(_git("log", "--since=24 hours ago", "--format=%h").splitlines()),
+            "dirty": len(_git("status", "--porcelain").splitlines()),
+            "branch": _git("rev-parse", "--abbrev-ref", "HEAD"),
+        }
+    save_json(PULSE_PATH, {"ts": now_iso(), "projects": pulse})
+    return pulse
+
+
+def pulse_line(name):
+    """프로젝트 하나의 실측 한 줄 (표면 합류용). 펄스에 없으면 빈 문자열."""
+    pj = load_json(PULSE_PATH, {}).get("projects", {}).get(canonical_project(name))
+    if not pj:
+        return ""
+    parts = ["마지막 커밋 %s" % pj["last_commit"]]
+    if pj["commits_24h"]:
+        parts.append("24시간 커밋 %d" % pj["commits_24h"])
+    if pj["dirty"]:
+        parts.append("미커밋 변경 %d" % pj["dirty"])
+    return "실측(git): " + " · ".join(parts)
+
+
+def cmd_pulse(args):
+    """gari pulse — 전 프로젝트 git 실측 현황."""
+    cfg = load_config()
+    pulse = collect_pulse(cfg)
+    if not pulse:
+        print("git 프로젝트를 못 찾았습니다.")
+        return 0
+    rows = sorted(pulse.items(), key=lambda kv: kv[1]["last_commit"], reverse=True)
+    print("프로젝트 실측 펄스 — %s" % now_iso())
+    for name, p in rows:
+        act = "●" if p["commits_24h"] else ("◐" if p["dirty"] else "○")
+        print(" %s %-28s 커밋 %s · 24h %d건 · 미커밋 %d · %s" % (
+            act, name[:28], p["last_commit"], p["commits_24h"], p["dirty"], p["last_subject"][:40]))
+    return 0
 
 
 def cmd_weekly(args):
@@ -1666,15 +1789,16 @@ def cmd_ask(args):
              "- 아침 보고: 매일 %d시 예약 실행 (한 칸·멘토 리뷰·참견·질문·큐 정리 포함). 세션 시작과 무관.\n"
              "- 주간 보고: 매주 월요일 9:30 (gari weekly). 뇌클론의 /brain-distill 의식과는 별개 시스템이다.\n"
              "- 모순 순찰: 하루 1회 아침 트리아지에서. 실시간이 아니다.\n"
-             "- 뇌 배치: 접수·기억답변·증류=haiku / 판단·멘토·일반지식·아침산출=sonnet.\n"
+             "- 뇌 배치 (config.json 다이얼): 접수·기억답변·증류=%s / 판단·멘토·일반지식·아침산출=%s. 모델은 부품 — 바꿔 끼울 수 있다.\n"
              "- 저장: ~/gari/store (카드 원장·대화·보고). 원문 대화는 각 CLI 폴더에 그대로, 가리는 읽기만.\n"
+             "- 실측 펄스: 프로젝트 폴더의 git 활동(커밋·미커밋 변경)을 스윕마다 수집 — 대화에 안 나온 코드 작업도 본다. 프로젝트 상태 질문엔 카드+펄스 둘 다 근거로.\n"
              "- 수집 범위: 전량 (2026-07-06 형님 지시). 그 이전 회사 기록은 소급분만.\n"
              "- 위키 보유 프로젝트 (활동 이력 명단): %s. 이 밖의 이름을 지어내지 마라 — "
              "단, 형님이 명단 밖 이름을 말하면 옛/휴면 프로젝트일 수 있으니 부정하지 말고 카드·문서에서 근거를 찾아 답하라.\n"
-             "- 화면 지도 — 현황판 탭: ①오늘 카드(한 칸·멘토 훈련·참견·질문 — 아침 산출) ②프로젝트 방향판(위키 기반, 프로젝트별 정체+다음 결정) "
-             "③처리함(형님 액션 인박스: ▶지금 이거 1건 / 끝난 듯·중복=가리 정리 제안으로 접힘 / ◇결재 / 채점 맞음·오발 / 실무 대기=파견 가능이라 접힘 / 그 외 미결) "
-             "④오늘 기록 1줄. 대화 탭: 세션 목록·말풍선 스레드. 행 클릭=맥락 질문, 완료/나중에 버튼.") % (
-        cfg["sweep_interval_min"], cfg["report_hour"],
+             "- 화면 지도 — 현황판 탭 (2026-07-07 개편): 맨 위 '가리의 한 줄'(오늘 상황 브리핑) + 스테이크 3개(각각 '하면/답하면/놔두면 ~가 어떻게 되는지' 결과절 + 완료/나중에 버튼 또는 입력·대화 연결) "
+             "+ '나머지 N건은 가리가 보고 있습니다 · 상세'. 상세를 열면 옛 화면 전체: ①오늘 카드(한 칸·멘토 훈련·참견·질문) ②프로젝트 방향판(위키 기반) "
+             "③처리함(▶지금 이거/정리 제안/◇결재/채점/실무 대기/미결) ④오늘 기록. 대화 탭: 세션 목록·말풍선 스레드. 행 클릭=맥락 질문.") % (
+        cfg["sweep_interval_min"], cfg["report_hour"], cfg["ask_model"], cfg["ask_fallback_model"],
         ", ".join(sorted(wf.stem for wf in WIKI_DIR.glob("*.md"))) if WIKI_DIR.exists() else "(없음)")
     persona += facts
     if cfg.get("collect_all"):
@@ -1699,7 +1823,7 @@ def cmd_ask(args):
         DISTILL_MARKER, persona, lenses,
         "\n".join(lines) or "(없음)", hist_txt or "(첫 대화)", question)
 
-    SELF_WORDS = ("처리함", "현황판", "방향판", "위키", "카드", "재우", "나중에", "스누즈",
+    SELF_WORDS = ("처리함", "현황판", "방향판", "스테이크", "위키", "카드", "재우", "나중에", "스누즈",
                   "브리핑", "아침 보고", "보고서", "트리아지", "정리 제안", "펫", "말풍선",
                   "입력창", "대화창", "세션", "소급", "증류", "수집")
     self_q = any(w in question for w in SELF_WORDS)
@@ -1748,20 +1872,27 @@ def cmd_ask(args):
         print("  → 전체 진단은 `gari doctor` 로 확인할 수 있습니다.", file=sys.stderr)
         return 1
 
-    if "[깊은사고]" in answer:
+    if re.search(r"\[\s*깊은\s*사고\s*\]", answer):
         set_ask_status("깊이 생각하는 중… (사고 원전 + 웹 검색 가능)")
         _chat_set_meta(sid, "deep", True)   # 이 세션은 이제 논의 — 후속 질문도 깊게 이어진다
         depth = (TEMPLATES / "thinking-depth.md").read_text(encoding="utf-8")
         # 관련 프로젝트 위키 동봉: 질문에 이름이 걸리는 것 + 최근 활동 상위 (카드보다 종합된 재료)
         wiki_txts, seen_wk = [], set()
-        alias = {"review-board": "review-board", "sound-library": "sound-library", "젤리": "jellyfish", "뇌클론": "brain-clone",
-                 "브레인클론": "brain-clone", "게임잼": "solo-game"}
+        # 별칭은 PROJECT_ALIASES 한 곳만 유지 (이중 지도는 한쪽만 고쳐지는 부패의 온상)
+        alias = dict(PROJECT_ALIASES)
+        alias.setdefault("젤리", "jellyfish")
+        alias.setdefault("게임잼", "solo-game")
         ql = question.lower()
         for wf in sorted(WIKI_DIR.glob("*.md")) if WIKI_DIR.exists() else []:
             stem = wf.stem.lower()
-            hit = stem[:6] in ql or any(k in question and v in stem for k, v in alias.items())
+            hit = stem[:6] in ql or any(k.lower() in ql and (v.lower() in stem or stem in v.lower())
+                                        for k, v in alias.items())
             if hit and wf.stem not in seen_wk:
-                wiki_txts.append(wf.read_text(encoding="utf-8")[:3000])
+                wtxt = wf.read_text(encoding="utf-8")[:3000]
+                pl = pulse_line(wf.stem)
+                if pl:
+                    wtxt += "\n" + pl
+                wiki_txts.append(wtxt)
                 seen_wk.add(wf.stem)
         if not wiki_txts:
             for b in _hud_compass(read_cards(3))[:2]:   # 못 찾으면 최근 활동 상위 2개
@@ -1794,7 +1925,7 @@ def cmd_ask(args):
                                        timeout=cfg["do_timeout_sec"])
         if not answer:
             answer = "깊은 사고 뇌 호출 실패 — gari status 확인 요망"
-    elif "[일반질문]" in answer:
+    elif re.search(r"\[\s*일반\s*질문\s*\]", answer):
         set_ask_status("일반 지식 답변 중… (웹 검색 가능)")
         gen = ("%s 너는 \"가리\" — 형님(아이루)의 쾌활하고 충성심 있는 솔직한 부하이자 PM이다. "
                "일반 질문이다. 아는 대로 정확히 답하되 모르면 모른다고 하라. 최신 정보가 필요하면 WebSearch로 확인하고 출처를 밝혀라. "
@@ -1940,6 +2071,30 @@ def cmd_do(args):
         print('사용법: gari do "작업" [--in 프로젝트경로] [--tool claude|codex|gjc] [--write]')
         return 1
     workdir = workdir or os.getcwd()
+    # 워크트리 격리: 가리 밖 git 레포에 쓰기 파견이면 격리 사본에서 일한다 —
+    # 형님이 작업 중인 원본과 절대 충돌하지 않게. 합류(머지)는 형님 검토 후 (자동 머지 금지).
+    wt_branch, orig_workdir = None, workdir
+    real = Path(workdir).expanduser().resolve()
+    if write and real.exists() and not str(real).startswith(str(GARI_HOME)):
+        in_git = subprocess.run(["git", "-C", str(real), "rev-parse", "--git-dir"],
+                                capture_output=True).returncode == 0
+        if in_git:
+            wt_name = ("wt-" + mark.split(":")[0]) if (mark and ":" in mark) \
+                else ("wt-" + datetime.now().strftime("%Y%m%d-%H%M%S"))
+            wt_dir = GARI_HOME / "works" / wt_name
+            wt_branch = "gari/" + wt_name
+            if not wt_dir.exists():
+                r = subprocess.run(["git", "-C", str(real), "worktree", "add", "-b", wt_branch,
+                                    str(wt_dir)], capture_output=True, text=True)
+                if r.returncode != 0:  # 브랜치 잔존(재파견) → 재사용 시도
+                    r = subprocess.run(["git", "-C", str(real), "worktree", "add", str(wt_dir),
+                                        wt_branch], capture_output=True, text=True)
+                if r.returncode != 0:
+                    print("워크트리 생성 실패 — 원본 오염을 피하려 파견을 중단합니다: %s"
+                          % (r.stderr or "")[:120], file=sys.stderr)
+                    return 1
+            workdir = str(wt_dir)
+            task = task.replace(str(real), workdir)  # 지시 속 절대경로가 격리를 뚫지 않게
     cards = read_cards(cfg["briefing_days"])
     ctx = "\n".join("- [%s] %s: %s" % (_proj_short(c), c["type"], c["text"])
                     for c in cards[-40:])
@@ -1985,6 +2140,21 @@ def cmd_do(args):
                 mms["work_file"] = str(work_file)
                 project_log(mpj, "%s단계 실무 보고 도착 — 검수 대기" % mn)
                 break
+    merge_note = ""
+    if wt_branch:
+        st = subprocess.run(["git", "-C", workdir, "status", "--porcelain"],
+                            capture_output=True, text=True).stdout.strip()
+        if st:
+            subprocess.run(["git", "-C", workdir, "add", "-A"], capture_output=True)
+            subprocess.run(["git", "-C", workdir, "commit", "-m", "가리 파견 산출 — " + task[:60]],
+                           capture_output=True)
+            merge_note = ("산출은 격리 브랜치 %s에 있습니다 (원본 무접촉). "
+                          "검토 후 합류를 지시해 주세요." % wt_branch)
+        else:
+            subprocess.run(["git", "-C", str(Path(orig_workdir).expanduser().resolve()),
+                            "worktree", "remove", "--force", workdir], capture_output=True)
+            merge_note = "변경 없음 — 격리 사본은 철거했습니다."
+        out += "\n\n[워크트리] " + merge_note
     summary = out.replace("\n", " ")[:180]
     append_cards([{"id": hashlib.md5((stamp + task).encode()).hexdigest()[:8],
                    "ts": now_iso(), "tool": "gari-do", "project": workdir,
@@ -2046,6 +2216,9 @@ def _hud_compass(cards):
                     break
                 if in_pending and line.startswith("**"):
                     break
+        pl = pulse_line(name)
+        if pl:
+            ident = (ident + "  ·  " + pl) if ident else pl
         board.append({"project": name, "identity": ident, "next": nxt, "activity": cnt})
     return board
 
@@ -2351,7 +2524,7 @@ def triage_summary_lines(data, pends_by_id):
     for d in data.get("done_like", []):
         c = pends_by_id.get(d["id"])
         if c:
-            tag = ("실측 확인 — " + d.get("proof", "")[:60]) if d.get("verified")                   else ("실측 불일치!" if d.get("verified") is False else "기록상")
+            tag = ("실측 확인 — " + strip_code_coords(d.get("proof", ""))[:60]) if d.get("verified")                   else ("실측 불일치!" if d.get("verified") is False else "기록상")
             lines.append("끝난 듯 (%s, `gari resolve %s`): %s" % (tag, c["id"], c["text"][:50]))
     for d in data.get("dupes", []):
         drops = ", ".join(d.get("drop", []))
@@ -2476,9 +2649,14 @@ def compose_mentor_review(cfg):
              for c in acted[-80:]]
     persona = (TEMPLATES / "mentor-review.txt").read_text(encoding="utf-8")
     depth = (TEMPLATES / "thinking-depth.md").read_text(encoding="utf-8")
-    prompt = ("%s %s\n\n=== 방법론 원전 (교과서) ===\n%s\n\n"
+    north_mentor = ""
+    north_p = Path(cfg["north_star_path"])
+    if north_p.exists():
+        north_mentor = "\n\n=== 북극성 (선언된 방향·우선순위) ===\n" + "\n".join(
+            north_p.read_text(encoding="utf-8").splitlines()[:40])
+    prompt = ("%s %s%s\n\n=== 방법론 원전 (교과서) ===\n%s\n\n"
               "=== 어제 활동 분포 ===\n%s\n\n=== 어제 활동 (카드) ===\n%s") % (
-        DISTILL_MARKER, persona, depth, dist_txt, "\n".join(lines))
+        DISTILL_MARKER, persona, north_mentor, depth, dist_txt, "\n".join(lines))
     text, rc = run_claude(prompt, cfg["ask_fallback_model"], cfg, "mentor",
                           timeout=cfg["do_timeout_sec"])
     if rc == 0 and text:
@@ -2605,9 +2783,17 @@ def project_dispatch(pj, ms, cfg):
     """마일스톤 하나를 실무자에게 백그라운드 파견."""
     prior = "; ".join("%d단계 완료(%s)" % (m["n"], (m.get("proof") or "검수 통과")[:60])
                       for m in pj["milestones"] if m["status"] == "done")
+    spec_txt, accept_txt = ms["spec"], ms["accept"]
+    real = Path(pj["dir"]).expanduser().resolve()
+    if pj.get("write") and not str(real).startswith(str(GARI_HOME)) and \
+            subprocess.run(["git", "-C", str(real), "rev-parse", "--git-dir"],
+                           capture_output=True).returncode == 0:
+        wt = str(GARI_HOME / "works" / ("wt-" + pj["id"]))
+        spec_txt = spec_txt.replace(str(real), wt).replace(pj["dir"], wt)
+        accept_txt = accept_txt.replace(str(real), wt).replace(pj["dir"], wt)
     spec = ("[가리 프로젝트 '%s' — %d/%d단계] %s%s\n이 단계의 완료 기준: %s") % (
-        pj["title"], ms["n"], len(pj["milestones"]), ms["spec"],
-        ("\n이전 단계: " + prior) if prior else "", ms["accept"] or "보고로 판단")
+        pj["title"], ms["n"], len(pj["milestones"]), spec_txt,
+        ("\n이전 단계: " + prior) if prior else "", accept_txt or "보고로 판단")
     cmd = [str(GARI_HOME / "bin" / "gari"), "do", spec, "--bg",
            "--in", pj["dir"], "--mark", "%s:%d" % (pj["id"], ms["n"])]
     if pj.get("write"):
@@ -2629,14 +2815,18 @@ def project_verify(pj, ms, cfg):
           'JSON만: {"pass": true|false, "proof": "확인한 파일:내용 또는 불충족 사유 한 줄"}') % (
         DISTILL_MARKER, pj["title"], ms["spec"][:300], ms["accept"][:200] or "보고 내용 일치",
         report_tail[:800])
+    vwt = GARI_HOME / "works" / ("wt-" + pj["id"])
+    if vwt.exists():
+        vp = vp.replace(str(Path(pj["dir"]).expanduser().resolve()), str(vwt)).replace(pj["dir"], str(vwt))
     vtext, vrc = run_claude_stream(vp, cfg["ask_model"], cfg, "project-verify",
-                                   "Read,Glob,Grep", timeout=180, cwd=pj["dir"])
+                                   "Read,Glob,Grep", timeout=180,
+                                   cwd=str(vwt) if vwt.exists() else pj["dir"])
     m = re.search(r"\{.*\}", vtext or "", re.S)
     try:
         vj = json.loads(m.group(0)) if m else {}
     except json.JSONDecodeError:
         vj = {}
-    return bool(vj.get("pass")), str(vj.get("proof", "검수 응답 파싱 실패"))[:150]
+    return bool(vj.get("pass")), strip_code_coords(str(vj.get("proof", "검수 응답 파싱 실패")))[:150]
 
 
 def project_tick(cfg):
@@ -2677,7 +2867,7 @@ def project_tick(cfg):
                     if ms["attempts"] >= 2:
                         pj["status"] = "escalated"
                         project_log(pj, "에스컬레이션 — 형님 판단 필요")
-                        notify("가리 프로젝트 — 막힘", "%s %d단계: %s" % (pj["title"], ms["n"], proof[:60]), cfg)
+                        notify("가리 프로젝트 — 막힘", "%s %d단계: %s" % (pj["title"], ms["n"], proof[:60]), cfg, urgent=True)
                     else:
                         ms["spec"] += "\n[재시도 %d — 이전 시도 불충족 사유: %s. 이 부분을 반드시 해결하라]" % (
                             ms["attempts"], proof)
@@ -2691,7 +2881,10 @@ def project_tick(cfg):
                            "session": pj["id"], "burst": pj["id"], "type": "win",
                            "text": "(가리 프로젝트 완료) %s — %d단계 전부 실측 검수 통과" % (
                                pj["title"], len(pj["milestones"]))}])
-            notify("가리 프로젝트 — 완료", "%s (%d단계)" % (pj["title"], len(pj["milestones"])), cfg)
+            wt_done = GARI_HOME / "works" / ("wt-" + pj["id"])
+            notify("가리 프로젝트 — 완료", "%s (%d단계)%s" % (
+                pj["title"], len(pj["milestones"]),
+                " · 산출은 격리 브랜치 gari/wt-%s — 검토 후 합류" % pj["id"] if wt_done.exists() else ""), cfg)
             metric("project_done", pj["title"])
 
 
@@ -2711,7 +2904,11 @@ def cmd_project(args):
             else:
                 rest.append(args[i])
             i += 1
-        pj = project_plan(" ".join(rest), workdir, write, cfg)
+        try:
+            pj = project_plan(" ".join(rest), workdir, write, cfg)
+        except (RuntimeError, json.JSONDecodeError, KeyError) as e:
+            print("계획 수립 실패: %s — 목표를 더 구체적으로 다시 시도해 주세요." % str(e)[:80])
+            return 1
         print("계획서 %s — %s (%d단계, 승인 대기)" % (pj["id"], pj["title"], len(pj["milestones"])))
         for ms in pj["milestones"]:
             print("  %d. %s" % (ms["n"], ms["spec"][:80]))
@@ -3041,7 +3238,7 @@ def main():
         "sweep": cmd_sweep, "report": cmd_report, "brief": cmd_brief,
         "status": cmd_status, "enqueue": cmd_enqueue, "done": cmd_done,
         "resolve": cmd_resolve, "log": cmd_log,
-        "ask": cmd_ask, "do": cmd_do, "pet": cmd_pet, "hud": cmd_hud, "weekly": cmd_weekly, "grade": cmd_grade, "chat": cmd_chat, "cost": cmd_cost, "doctor": cmd_doctor, "init": cmd_init, "wiki": cmd_wiki, "triage": cmd_triage, "snooze": cmd_snooze, "backfill": cmd_backfill, "project": cmd_project,
+        "ask": cmd_ask, "do": cmd_do, "pet": cmd_pet, "hud": cmd_hud, "weekly": cmd_weekly, "grade": cmd_grade, "chat": cmd_chat, "cost": cmd_cost, "doctor": cmd_doctor, "init": cmd_init, "wiki": cmd_wiki, "triage": cmd_triage, "snooze": cmd_snooze, "backfill": cmd_backfill, "project": cmd_project, "pulse": cmd_pulse,
     }
     args = sys.argv[1:]
     if not args or args[0] not in cmds:
