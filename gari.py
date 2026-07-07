@@ -1406,7 +1406,7 @@ def cmd_gateway(args):
         with urllib.request.urlopen(api + method, data=data, timeout=70) as r:
             return json.loads(r.read().decode())
 
-    print("게이트웨이 가동 — 허용 chat_id: %s" % (allowed or "(미설정 — 수신 id를 표시만 합니다)"))
+    print("게이트웨이 가동 — 허용 chat_id: %s" % (allowed or "(미설정 — 수신 id를 표시만 합니다)"), flush=True)
     offset = 0
     while True:
         try:
@@ -1423,7 +1423,7 @@ def cmd_gateway(args):
             if not text:
                 continue
             if not allowed:
-                print("수신 chat_id=%s — config telegram_chat_id에 등록하면 응답 시작" % chat)
+                print("수신 chat_id=%s — secrets.env TELEGRAM_CHAT_ID에 등록하면 응답 시작" % chat, flush=True)
                 continue
             if chat != allowed:
                 print("허용 외 chat_id=%s 무시" % chat, file=sys.stderr)
@@ -2092,6 +2092,20 @@ def run_brain(prompt, model, cfg, kind, tools=None, timeout=None, cwd=None, max_
                 text, rc = r.stdout.strip(), r.returncode
             except (OSError, subprocess.TimeoutExpired):
                 text, rc = "", 1
+        elif ex["type"] == "claude-env":
+            key = os.environ.get(ex.get("key_env", ""), "")
+            if not key:
+                continue
+            _env_keep = dict(os.environ)
+            os.environ["ANTHROPIC_BASE_URL"] = ex["base_url"]
+            os.environ["ANTHROPIC_AUTH_TOKEN"] = key
+            try:
+                # 클코 하네스는 그대로, 뇌만 교체 — 도구(Read/Grep 등)까지 살아있는 유일한 비상 차선
+                text, rc = run_claude(prompt, ex.get("model", "sonnet"), cfg, kind,
+                                      tools=tools, timeout=timeout, cwd=cwd, max_out=max_out)
+            finally:
+                os.environ.clear()
+                os.environ.update(_env_keep)
         elif ex["type"] == "api" and not tools:
             text, rc = run_api(prompt, ex, cfg, kind, timeout=timeout, max_out=max_out)
         else:
@@ -2108,7 +2122,11 @@ def run_claude(prompt, model, cfg, kind, tools=None, timeout=None, cwd=None, max
     if tools:
         cmd += ["--allowedTools", tools]
     t0 = time.time()
-    env = dict(CLAUDE_ENV, CLAUDE_CODE_MAX_OUTPUT_TOKENS=str(max_out)) if max_out else CLAUDE_ENV
+    env = dict(CLAUDE_ENV, CLAUDE_CODE_MAX_OUTPUT_TOKENS=str(max_out)) if max_out else dict(CLAUDE_ENV)
+    for _k in ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"):
+        # claude-env 실행자의 뇌 교체 — 스냅샷(CLAUDE_ENV)이 아니라 현재 환경을 반영해야 닿는다
+        if _k in os.environ:
+            env[_k] = os.environ[_k]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True,
                            timeout=timeout or cfg["distill_timeout_sec"],
