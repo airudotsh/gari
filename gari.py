@@ -1813,10 +1813,12 @@ def cmd_ask(args):
                 "그다음 ~/gari, ~/roadmap, ~/brain-clone 의 문서를 "
                 "Read/Glob/Grep으로 **지금 직접 조사해서** 결과로 답하라 — \"찾아볼까요?\" 같은 되묻기 절대 금지 (조사는 네 권한이다). "
                 "화면·기능·사용법 질문이면 소스코드보다 ~/gari/docs/INVENTORY.md와 README.md를 우선 근거로 하라. "
-                "답은 제품 언어로만 — 라인번호·git 상태·카드 ID 노출 금지 (형님은 기획자다). 그래도 없으면 어디를 찾아봤는지 밝혀라.\n"
+                "**로컬에서 빈손이면 거기서 끝내지 마라**: 질문이 세상의 개념·용어·트렌드·제품에 관한 것일 수 있으면 "
+                "WebSearch로 웹까지 확인하고 출처(링크)를 밝혀라 — '레포에 없습니다'는 답이 아니라 수색 중간보고다. "
+                "답은 제품 언어로만 — 라인번호·git 상태·카드 ID 노출 금지 (형님은 기획자다). 그래도 없으면 어디(로컬·웹)를 찾아봤는지 밝혀라.\n"
                 "=== 형님의 질문 ===\n%s") % (DISTILL_MARKER, persona, question)
         a2, rc2 = run_claude_stream(deep, cfg["ask_model"], cfg, "ask-docs",
-                                    "Read,Glob,Grep", timeout=cfg["do_timeout_sec"],
+                                    "Read,Glob,Grep,WebSearch,WebFetch", timeout=cfg["do_timeout_sec"],
                                     cwd=str(Path.home()))
         if a2:
             answer = "(기록엔 없어서 문서를 뒤졌습니다) " + a2
