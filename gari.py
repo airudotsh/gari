@@ -44,7 +44,25 @@ def personalize(text, cfg):
                 .replace("아이루", cfg.get("user_name", "아이루")))
 
 
+SECRETS_PATH = GARI_HOME / "secrets.env"
+
+
+def _load_secrets():
+    """비밀 금고(secrets.env, 600) → 환경변수. 이미 설정된 환경변수는 존중 (setdefault).
+    크레덴셜은 채팅·config.json이 아니라 이 파일에만 — git 미추적."""
+    if not SECRETS_PATH.exists():
+        return
+    for line in SECRETS_PATH.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        if v.strip():
+            os.environ.setdefault(k.strip(), v.strip())
+
+
 def load_config():
+    _load_secrets()
     with open(CONFIG_PATH, encoding="utf-8") as f:
         cfg = json.load(f)
     # claude 경로 자동 해결 — 설정 경로가 죽었으면 PATH에서 찾는다 (기기 이식성)
@@ -1372,13 +1390,13 @@ def cmd_gateway(args):
     import urllib.request
     import urllib.parse
     cfg = load_config()
-    token = cfg.get("telegram_token") or os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    allowed = str(cfg.get("telegram_chat_id", ""))
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "") or cfg.get("telegram_token", "")
+    allowed = os.environ.get("TELEGRAM_CHAT_ID", "") or str(cfg.get("telegram_chat_id", ""))
     if not token:
         print("텔레그램 토큰이 없습니다. 켜는 법 (1분):")
         print(" 1. 텔레그램에서 @BotFather → /newbot → 토큰 복사")
-        print(" 2. config.json에 \"telegram_token\": \"<토큰>\" 추가")
-        print(" 3. 봇에게 아무 말 보내고 gari gateway 첫 실행 → 표시되는 chat_id를 \"telegram_chat_id\"에 등록")
+        print(" 2. ~/gari/secrets.env 의 TELEGRAM_BOT_TOKEN= 뒤에 붙여넣기")
+        print(" 3. 봇에게 아무 말 보내고 gari gateway 첫 실행 → 표시되는 chat_id를 TELEGRAM_CHAT_ID=에 등록")
         print(" 4. 상시 구동: launchctl load ~/gari/launchd/com.airu.gari-gateway.plist")
         return 1
     api = "https://api.telegram.org/bot%s/" % token

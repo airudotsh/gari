@@ -18,3 +18,4 @@ tests/pm-e2e/
 tests/pm-battery/
 tests/pm-ask*/
 queue/
+secrets.env
