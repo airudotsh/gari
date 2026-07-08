@@ -1540,11 +1540,11 @@ aside .foot{margin-top:auto;padding:12px 10px;border-top:1px solid var(--border)
 font-size:11.5px;color:var(--muted-fg);line-height:1.7}
 /* ── 메인 ── */
 main{overflow-y:auto;padding:36px 40px 80px}
-.view{display:none;max-width:880px;animation:fadein .18s ease}
+.view{display:none;animation:fadein .18s ease}
 .view.on{display:block}
 @keyframes fadein{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 h1{font-size:24px;letter-spacing:-.03em;margin-bottom:4px;font-weight:700}
-.lead{color:var(--muted-fg);font-size:14px;margin-bottom:26px;max-width:640px}
+.lead{color:var(--muted-fg);font-size:14px;margin-bottom:26px;max-width:68ch}
 h2{font-size:13px;color:var(--muted-fg);font-weight:600;text-transform:none;
 margin:30px 0 10px;letter-spacing:.01em}
 .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:20px 22px}
