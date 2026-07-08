@@ -505,7 +505,12 @@ def distill(turns, tool, project, session, burst_id, cfg):
         out = out[out.find("["):out.rfind("]") + 1]
     start, end = out.find("["), out.rfind("]")
     if start == -1 or end == -1:
-        raise RuntimeError("증류 출력에 JSON 배열 없음: %s" % out[:200])
+        # 모델이 말대꾸한 경우 — 교착(커서 정지) 대신 '증류 불능' 흔적을 남기고 전진한다.
+        # 원문 대화는 가리 밖에 무손실로 남아 있으므로 최악도 '그 조각의 카드 부재'다 (fail-loud, no-deadlock).
+        health_incr("distill_json_miss")
+        return [{"type": "pending", "text": "(증류 불능 구간) %s 세션 %s 조각 — 모델이 JSON 대신 답변함. "
+                 "원문은 소스에 남아 있음, 필요시 gari backfill로 재시도" % (tool, (session or "?")[:8]),
+                 "quote": out[:60]}]
     items = json.loads(out[start:end + 1])
     cards = []
     for it in items:
