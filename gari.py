@@ -1638,6 +1638,9 @@ def build_dash(cfg):
              "<p class='lead'>가리는 아이루의 개인 AI 비서입니다. 모든 AI 도구와 나눈 대화를 스스로 모아 기억하고, "
              "아침마다 중요한 것 3가지를 골라 보고하며, 시킨 일은 다른 AI에게 맡긴 뒤 결과를 직접 검사합니다. "
              "이 페이지는 그 모든 움직임을 실시간으로 보여주는 창입니다.</p>")
+    p.append("<div class='sub' style='margin-top:10px'>"
+             "<a href='#inbox' style='color:var(--muted-fg)'>처리함</a> · <a href='#today' style='color:var(--muted-fg)'>오늘 카드</a> · "
+             "<a href='#auto' style='color:var(--muted-fg)'>자동화</a> · <a href='#log' style='color:var(--muted-fg)'>기록</a></div>")
     p.append("<div style='display:flex;gap:8px;flex-wrap:wrap;margin-top:14px'>"
              "<span class='badge'><span class='dot' style='background:%s'></span>%s</span>"
              "<span class='badge'>📱 폰 연결 %s</span>"
@@ -1743,6 +1746,69 @@ def build_dash(cfg):
     p.append("<div class='card'><div class='kpi-label'>주간 반성</div><div class='kpi'>월요일</div>"
              "<div class='kpi-sub'>한 주의 교정·실수를 복기해 '다음 주의 나를 바꿀 규칙'을 스스로 제안합니다</div></div>")
     p.append("</div></section>")
+    pend_all = open_pendings(read_cards_all())
+    def pend_row(c):
+        return row([e(_proj_short(c)), e(c["text"][:110]),
+                    ("<div class='actrow'><button class='ghost' onclick=\"act('/api/resolve','%s',this)\">완료</button>"
+                     "<button class='ghost' onclick=\"act('/api/snooze','%s',this)\">나중에</button></div>"
+                     % (e(c.get("id", "")), e(c.get("id", "")))) if c.get("id") else ""])
+    p.append("<section id='inbox'><h2>처리함 — 열린 티켓 %d건</h2>"
+             "<p class='desc'>가리가 대화에서 건져 올린 '아직 안 닫힌 일' 전부입니다. 완료면 닫고, 지금 결정할 수 없으면 나중에(7일 뒤 복귀)로 재워두세요.</p>"
+             "<div class='card' style='padding:6px 8px'><table>%s</table></div></section>" % (
+        len(pend_all), "".join(pend_row(c) for c in pend_all[-30:][::-1])
+        or row(["<span class='dim'>비어 있음 — 좋은 상태입니다</span>", "", ""])))
+    def _read_txt(name):
+        f = STORE / name
+        return f.read_text(encoding="utf-8").strip() if f.exists() else ""
+    today_q = _read_txt("question.txt")
+    today_step = _read_txt("next-step.txt").replace("\n", " · ")
+    today_nag = _read_txt("nag.txt")
+    mentor_line = ""
+    if MENTOR_PATH.exists():
+        for _l in MENTOR_PATH.read_text(encoding="utf-8").splitlines():
+            if _l.startswith("오늘의 훈련:"):
+                mentor_line = _l.split(":", 1)[1].strip()
+                break
+    p.append("<section id='today'><h2>오늘 카드 — 아침 산출</h2>"
+             "<p class='desc'>매일 아침 가리가 기억 전체에서 뽑는 것들: 오늘의 한 칸(행동), 답이 필요한 질문, 참견과 멘토 훈련.</p>"
+             "<div class='grid g3'>"
+             "<div class='card'><div class='kpi-label'>오늘의 한 칸</div>%s</div>"
+             "<div class='card'><div class='kpi-label'>가리의 질문</div>%s"
+             "<div class='actrow'><button class='ghost' onclick=\"document.getElementById('inp').value='아침 질문에 답할게: ';document.getElementById('inp').focus()\">채팅으로 답하기</button></div></div>"
+             "<div class='card'><div class='kpi-label'>참견 · 멘토 훈련</div>%s<div class='hint' style='margin-top:8px'>%s</div></div>"
+             "</div></section>" % (
+        e(today_step) or "<span class='dim'>아침 보고 때 산출</span>",
+        e(today_q) or "<span class='dim'>없음</span>",
+        e(today_nag) or "<span class='dim'>없음</span>",
+        e(mentor_line) or ""))
+    autoruns = [c for c in cards14 if c.get("tool") in ("gari-cron", "gari-do", "gari-pm")][-12:][::-1]
+    works = sorted((GARI_HOME / "works").glob("*.md"), reverse=True)[:8] if (GARI_HOME / "works").exists() else []
+    all_pj = []
+    if PROJECTS_DIR.exists():
+        for pf in sorted(PROJECTS_DIR.glob("p-*.json"), reverse=True):
+            pj2 = load_json(pf, {})
+            dn = len([m for m in pj2.get("milestones", []) if m["status"] == "done"])
+            all_pj.append((pj2.get("status", ""), pj2.get("title", ""), dn, len(pj2.get("milestones", []))))
+    p.append("<section id='auto'><h2>자동화 내역</h2>"
+             "<p class='desc'>가리가 사람 없이 해낸 일들의 흔적 — 예약 실행, 파견 작업, 단계별 프로젝트.</p>"
+             "<div class='grid g3'>")
+    p.append("<div class='card'><div class='kpi-label'>최근 자동 실행 (예약·파견)</div><table>%s</table></div>" % (
+        "".join(row([e(c["ts"][5:16]), e(c["text"][:70])]) for c in autoruns)
+        or row(["<span class='dim'>아직 없음</span>", ""])))
+    p.append("<div class='card'><div class='kpi-label'>파견 보고서 원문 (~/gari/works)</div><table>%s</table></div>" % (
+        "".join(row([e(w.stem)]) for w in works) or row(["<span class='dim'>아직 없음</span>"])))
+    p.append("<div class='card'><div class='kpi-label'>프로젝트 전체 이력</div><table>%s</table></div>" % (
+        "".join(row([e(t[:30]), "%d/%d" % (dn, n),
+                     {"done": "<span class='ok'>완료</span>", "running": "진행",
+                      "awaiting_approval": "결재 대기", "escalated": "<span class='bad'>막힘</span>"}.get(s, s)])
+                for s, t, dn, n in all_pj[:8]) or row(["<span class='dim'>아직 없음</span>", "", ""])))
+    p.append("</div></section>")
+    recent_dec = [c for c in cards14 if c.get("type") == "decision"][-15:][::-1]
+    p.append("<section id='log'><h2>최근 결정 기록</h2>"
+             "<p class='desc'>대화에서 증류된 결정 카드 — 가리 기억의 뼈대입니다. 더 깊은 열람은 옆 채팅에 물어보세요.</p>"
+             "<div class='card' style='padding:6px 8px'><table>%s</table></div></section>" % (
+        "".join(row([e(c["ts"][5:16]), e(_proj_short(c)), e(c["text"][:100])]) for c in recent_dec)
+        or row(["<span class='dim'>최근 2주 결정 없음</span>", "", ""])))
     p.append("<footer>이 페이지는 가리의 기억 원장에서 자동 생성됩니다 — 로그인도 외부 전송도 없고, "
              "모든 데이터는 이 컴퓨터의 ~/gari/store 안에만 있습니다. 다시 열기: 터미널에서 <b>gari dash</b> · "
              "<button class='ghost' onclick=\"act('/api/sweep','',this)\">지금 바로 정리(스윕) 실행</button></footer>")
