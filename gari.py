@@ -285,9 +285,14 @@ def extract_turns_claude(path, offset, max_bytes=None):
     with open(path, encoding="utf-8") as f:
         f.seek(offset)
         _cap = offset + max_bytes if max_bytes else None
-        for line in f:
-            if _cap and f.tell() > _cap:
-                break   # 조각 상한 — 다음 스윕이 이어서 (거대 백로그 교착 방지)
+        while True:
+            _pos = f.tell()   # for-이터레이터는 tell()을 금지 — readline 루프로 (2026-07-08 사고 교훈)
+            line = f.readline()
+            if not line:
+                break
+            if _cap and _pos > _cap:
+                f.seek(_pos)   # 이 줄은 다음 조각의 몫 — 되돌려 유실 방지
+                break
             try:
                 d = json.loads(line)
             except json.JSONDecodeError:
@@ -337,9 +342,14 @@ def extract_turns_codex(path, offset, max_bytes=None):
     with open(path, encoding="utf-8") as f:
         f.seek(offset)
         _cap = offset + max_bytes if max_bytes else None
-        for line in f:
-            if _cap and f.tell() > _cap:
-                break   # 조각 상한 — 다음 스윕이 이어서 (거대 백로그 교착 방지)
+        while True:
+            _pos = f.tell()   # for-이터레이터는 tell()을 금지 — readline 루프로 (2026-07-08 사고 교훈)
+            line = f.readline()
+            if not line:
+                break
+            if _cap and _pos > _cap:
+                f.seek(_pos)   # 이 줄은 다음 조각의 몫 — 되돌려 유실 방지
+                break
             try:
                 d = json.loads(line)
             except json.JSONDecodeError:
@@ -376,9 +386,14 @@ def extract_turns_gjc(path, offset, max_bytes=None):
     with open(path, encoding="utf-8") as f:
         f.seek(offset)
         _cap = offset + max_bytes if max_bytes else None
-        for line in f:
-            if _cap and f.tell() > _cap:
-                break   # 조각 상한 — 다음 스윕이 이어서 (거대 백로그 교착 방지)
+        while True:
+            _pos = f.tell()   # for-이터레이터는 tell()을 금지 — readline 루프로 (2026-07-08 사고 교훈)
+            line = f.readline()
+            if not line:
+                break
+            if _cap and _pos > _cap:
+                f.seek(_pos)   # 이 줄은 다음 조각의 몫 — 되돌려 유실 방지
+                break
             try:
                 d = json.loads(line)
             except json.JSONDecodeError:
