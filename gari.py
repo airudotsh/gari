@@ -1521,8 +1521,9 @@ display:grid;grid-template-columns:216px 1fr 384px;height:100vh;overflow:hidden}
 aside{border-right:1px solid var(--border);background:var(--panel);padding:20px 12px;
 display:flex;flex-direction:column;gap:2px}
 .brand{display:flex;align-items:center;gap:10px;padding:6px 10px 18px}
-.brand .fish{width:30px;height:30px;border-radius:9px;background:var(--accent);color:#fff;
-display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800}
+.brand .fish{width:32px;height:32px;border-radius:9px;background:var(--accent-soft);
+display:flex;align-items:center;justify-content:center;padding:4px}
+.brand .fish svg{width:100%;height:100%}
 .brand b{font-size:16px;letter-spacing:-.02em}
 .brand .st{font-size:11px;color:var(--muted-fg);display:flex;align-items:center;gap:5px}
 .pulse{width:7px;height:7px;border-radius:50%;background:var(--ok);animation:pl 2.4s infinite}
@@ -1869,13 +1870,24 @@ def build_dash(cfg):
     nav = "".join("<button data-v='%s'><span class='t'>%s</span>%s</button>" % (
         v, label, ("<span class='cnt'>%s</span>" % cnt) if cnt != "" else "")
         for v, label, cnt in views)
+    _FISH_SVG = ("<svg viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg' shape-rendering='crispEdges'>"
+                 "<rect x='3' y='6' width='8' height='5' fill='#e8590c'/>"
+                 "<rect x='4' y='5' width='6' height='1' fill='#e8590c'/><rect x='4' y='11' width='6' height='1' fill='#e8590c'/>"
+                 "<rect x='2' y='7' width='1' height='3' fill='#e8590c'/>"
+                 "<rect x='11' y='7' width='2' height='3' fill='#f2996e'/><rect x='13' y='5' width='2' height='2' fill='#e8590c'/>"
+                 "<rect x='13' y='9' width='2' height='2' fill='#e8590c'/>"
+                 "<rect x='4' y='7' width='1' height='1' fill='#111'/>"
+                 "<rect x='7' y='6' width='1' height='1' fill='#57a8ff'/><rect x='9' y='9' width='1' height='1' fill='#57a8ff'/>"
+                 "<rect x='6' y='9' width='1' height='1' fill='#57a8ff'/></svg>")
+    import urllib.parse as _up
+    _FAV = "data:image/svg+xml," + _up.quote(_FISH_SVG)
     shell = ("<style>%s</style>" % _DASH_CSS
-             + "<aside><div class='brand'><div class='fish'>가</div><div><b>가리</b>"
+             + "<aside><div class='brand'><div class='fish'>%s</div><div><b>가리</b>"
              "<div class='st'><span class='pulse%s'></span>%s · 폰 %s</div></div></div>"
              "<nav>%s</nav>"
              "<div class='foot'>오늘 $%.2f · 이달 $%.2f<br>%s 갱신 · 10분마다 자동<br>"
              "터미널: <b>gari dash</b></div></aside>" % (
-        "" if healthy else " bad", "정상" if healthy else "점검 필요",
+        _FISH_SVG, "" if healthy else " bad", "정상" if healthy else "점검 필요",
         "연결" if gw_on else "꺼짐", nav, cost_today, cost_month, e(now[11:16]))
              + "<main>"
              + "<div class='view' id='v-today'>%s</div>" % "".join(v_today)
@@ -1927,7 +1939,8 @@ catch(e){el.textContent=old;el.disabled=false;add('ga','실패 — 서버 연결
 </script>""")
     DASH_PATH.write_text("<!doctype html><meta charset='utf-8'>"
                          "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-                         "<title>가리 관제실</title>" + shell, encoding="utf-8")
+                         + ("<link rel='icon' href=\"%s\">" % _FAV)
+                         + "<title>가리 관제실</title>" + shell, encoding="utf-8")
 
 
 def cmd_serve(args):
