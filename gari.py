@@ -1482,10 +1482,20 @@ def cmd_gateway(args):
                 continue
             metric("gateway_msg", text[:60])
             try:
-                r = subprocess.run([str(GARI_HOME / "bin" / "gari"), "ask", text],
-                                   capture_output=True, text=True,
+                sid_f = STORE / ("gateway-sid-%s.txt" % chat)
+                ask_args = [str(GARI_HOME / "bin" / "gari"), "ask"]
+                if sid_f.exists():
+                    ask_args += ["--sid", sid_f.read_text().strip()]
+                else:
+                    ask_args += ["--new", "--print-sid"]
+                r = subprocess.run(ask_args + [text], capture_output=True, text=True,
                                    timeout=cfg["do_timeout_sec"] + 60, env=CLAUDE_ENV)
-                reply = (r.stdout or "").strip() or "(응답 실패 — gari doctor 확인)"
+                if not sid_f.exists():
+                    m_sid = re.search(r"^SID:([0-9a-f]+)", r.stdout or "", re.M)
+                    if m_sid:
+                        sid_f.write_text(m_sid.group(1))
+                reply = re.sub(r"^SID:[0-9a-f]+\n?", "", (r.stdout or "").strip()) \
+                    or "(응답 실패 — gari doctor 확인)"
             except subprocess.TimeoutExpired:
                 reply = "(응답이 너무 오래 걸려 중단했습니다 — 질문을 쪼개서 다시 물어봐 주세요)"
             for i in range(0, len(reply), 3800):
@@ -1817,8 +1827,16 @@ def cmd_serve(args):
                     q = (req.get("q") or "").strip()
                     if not q:
                         return self._json({"err": "빈 질문"}, 400)
-                    args = ["ask"] + (["--new"] if req.get("new") else []) + [q]
-                    return self._json({"answer": _cli(*args)})
+                    sid_f = STORE / "dash-sid.txt"
+                    if req.get("new") or not sid_f.exists():
+                        out = _cli("ask", "--new", "--print-sid", q)
+                        m_sid = re.search(r"^SID:([0-9a-f]+)", out, re.M)
+                        if m_sid:
+                            sid_f.write_text(m_sid.group(1))
+                        out = re.sub(r"^SID:[0-9a-f]+\n?", "", out)
+                    else:
+                        out = _cli("ask", "--sid", sid_f.read_text().strip(), q)
+                    return self._json({"answer": out})
                 if act == "/api/resolve":
                     return self._json({"out": _cli("resolve", req.get("id", ""), timeout=60)})
                 if act == "/api/snooze":
@@ -2709,6 +2727,7 @@ def cmd_ask(args):
     """자연어 창구: gari ask "어제 뭐 결정했지?" [--tool gjc] — 카드 근거로 가리가 답한다."""
     cfg = load_config()
     tool, rest, force_new = cfg.get("ask_tool_default", "claude"), [], False
+    pin_sid, print_sid = None, False
     i = 0
     while i < len(args):
         if args[i] == "--tool":
@@ -2716,6 +2735,11 @@ def cmd_ask(args):
             tool = args[i]
         elif args[i] == "--new":
             force_new = True
+        elif args[i] == "--sid":
+            i += 1
+            pin_sid = args[i]
+        elif args[i] == "--print-sid":
+            print_sid = True
         else:
             rest.append(args[i])
         i += 1
@@ -2724,7 +2748,12 @@ def cmd_ask(args):
         print('사용법: gari ask "질문" [--new] [--tool claude|gjc]')
         return 1
     question = " ".join(args)
-    sid = chat_new_session(question) if force_new else chat_current_session(cfg, question)
+    if pin_sid:
+        sid = pin_sid   # 채널 고정 세션 — 전역 '현재 대화' 포인터와 무관 (동시 사용 경합 차단)
+    else:
+        sid = chat_new_session(question) if force_new else chat_current_session(cfg, question)
+    if print_sid:
+        print("SID:%s" % sid)
 
     # 파견 승인 루프: 직전에 제안한 파견이 있고 형님이 승인하면 → 실제 파견 (백그라운드)
     meta, _turns = chat_read(sid)

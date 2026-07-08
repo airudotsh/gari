@@ -260,12 +260,16 @@ def _run_case(case):
     out = []
     t0 = time.time()
     try:
-        r = subprocess.run([GARI, "ask", "--new", case["q"]], capture_output=True,
+        r = subprocess.run([GARI, "ask", "--new", "--print-sid", case["q"]], capture_output=True,
                            text=True, timeout=420, env=env)
-        out.append(_grade(case, r.stdout.strip(), round(time.time() - t0, 1)))
+        import re as _re
+        m_sid = _re.search(r"^SID:([0-9a-f]+)", r.stdout or "", _re.M)
+        body = _re.sub(r"^SID:[0-9a-f]+\n?", "", r.stdout.strip())
+        out.append(_grade(case, body, round(time.time() - t0, 1)))
         if case.get("follow"):
             t1 = time.time()
-            r2 = subprocess.run([GARI, "ask", case["follow"]], capture_output=True,
+            sid_args = ["--sid", m_sid.group(1)] if m_sid else []
+            r2 = subprocess.run([GARI, "ask"] + sid_args + [case["follow"]], capture_output=True,
                                 text=True, timeout=420, env=env)
             out.append(_grade(case, r2.stdout.strip(), round(time.time() - t1, 1), suffix="-f"))
     except subprocess.TimeoutExpired:
