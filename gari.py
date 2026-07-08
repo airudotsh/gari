@@ -717,6 +717,13 @@ def _sweep_inner(args, cfg):
                 continue
             if not force and (now - st.st_mtime) < idle_sec:
                 continue
+            try:
+                first = json.loads(open(sp, encoding="utf-8").readline())
+                if first.get("test"):
+                    cursors[key] = {"offset": st.st_size}   # 배터리 세션 — 기억에 안 남긴다
+                    continue
+            except (json.JSONDecodeError, OSError):
+                pass
             turns, skipped = [], 0
             with open(sp, encoding="utf-8") as f:
                 f.seek(cur["offset"])
@@ -1727,9 +1734,11 @@ def chat_new_session(first_q=""):
     CHATS_DIR.mkdir(exist_ok=True)
     sid = hashlib.md5((now_iso() + first_q).encode()).hexdigest()[:8]
     title = (first_q[:40] + ("…" if len(first_q) > 40 else "")) or "새 대화"
+    meta = {"_meta": True, "title": title, "created": now_iso()}
+    if os.environ.get("GARI_TEST"):
+        meta["test"] = True   # 배터리 세션 — 증류 제외 + 실행기가 사후 소각
     with open(_chat_path(sid), "w", encoding="utf-8") as f:
-        f.write(json.dumps({"_meta": True, "title": title, "created": now_iso()},
-                           ensure_ascii=False) + "\n")
+        f.write(json.dumps(meta, ensure_ascii=False) + "\n")
     CHAT_CURRENT.write_text(sid, encoding="utf-8")
     return sid
 
