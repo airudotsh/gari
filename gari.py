@@ -795,6 +795,10 @@ def _sweep_inner(args, cfg):
         budget_check(cfg)  # 월 예산 게이트
     except Exception as e:
         errors.append("budget: %s" % e)
+    try:
+        build_dash(cfg)  # 관제 페이지 갱신
+    except Exception as e:
+        errors.append("dash: %s" % e)
     if errors:
         print("[sweep 오류]\n" + "\n".join(errors), file=sys.stderr)
     print("sweep 완료: 닫은 묶음 %d, 오류 %d" % (closed, len(errors)))
@@ -1489,6 +1493,159 @@ def cmd_gateway(args):
                     call("sendMessage", chat_id=chat, text=reply[i:i + 3800])
                 except Exception as e:
                     print("발신 오류: %s" % str(e)[:80], file=sys.stderr)
+    return 0
+
+
+DASH_PATH = STORE / "dash.html"
+
+_DASH_CSS = """body{font-family:-apple-system,sans-serif;max-width:1080px;margin:24px auto;padding:0 20px;
+background:#fff;color:#1a1a1a;font-size:15px;line-height:1.55}
+h1{font-size:22px;margin:8px 0 2px}h2{font-size:15px;margin:26px 0 8px;color:#555;font-weight:600}
+.sub{color:#888;font-size:13px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+table{border-collapse:collapse;width:100%;font-size:13.5px}td,th{padding:5px 8px;border-bottom:1px solid #eee;text-align:left}
+th{color:#999;font-weight:500;font-size:12px}.ok{color:#1a7f37}.bad{color:#c9372c}.dim{color:#999}
+.card{border:1px solid #e8e8e8;border-radius:10px;padding:14px 16px}
+.big{font-size:20px;font-weight:650}.tag{display:inline-block;background:#f4f4f4;border-radius:5px;padding:1px 7px;
+font-size:12px;margin-right:5px;color:#555}.orange{color:#e8590c}
+@media(prefers-color-scheme:dark){body{background:#161616;color:#e8e8e8}
+.card{border-color:#333}td,th{border-color:#2a2a2a}.tag{background:#262626;color:#bbb}}"""
+
+
+def build_dash(cfg):
+    """관제 페이지 — store 실데이터만으로 정적 HTML 재생성 (서버·JS 없음, 스윕마다 갱신).
+    묻는 화면(HUD)이 '뭘 할까'라면, 이 페이지는 '가리가 어떻게 돌고 있나'다 — 하네싱 실황."""
+    import html as _html
+    e = _html.escape
+    now = now_iso()
+    h = load_json(HEALTH_PATH, {})
+    # 실황 콜 타임라인
+    calls = []
+    if USAGE_LOG.exists():
+        for line in USAGE_LOG.read_text(encoding="utf-8").splitlines()[-400:]:
+            try:
+                calls.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    recent = list(reversed(calls[-20:]))
+    today = datetime.now().strftime("%Y-%m-%d")
+    month = datetime.now().strftime("%Y-%m")
+    cost_today = sum(c.get("cost_usd") or 0 for c in calls if str(c.get("ts", "")).startswith(today))
+    cost_month = sum(c.get("cost_usd") or 0 for c in calls if str(c.get("ts", "")).startswith(month))
+    # 진행 중 파견·프로젝트
+    projects = []
+    if PROJECTS_DIR.exists():
+        for pf in sorted(PROJECTS_DIR.glob("p-*.json")):
+            pj = load_json(pf, {})
+            if pj.get("status") in ("running", "awaiting_approval", "escalated"):
+                done_n = len([m for m in pj.get("milestones", []) if m["status"] == "done"])
+                projects.append((pj.get("status"), pj.get("title", ""), done_n, len(pj.get("milestones", []))))
+    # 스테이크
+    stakes = load_json(STORE / "stakes.json", {})
+    # 예약
+    crons = []
+    if CRONS_PATH.exists():
+        for line in CRONS_PATH.read_text(encoding="utf-8").splitlines():
+            try:
+                crons.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    # 펄스
+    pulse = load_json(PULSE_PATH, {}).get("projects", {})
+    # 학습 루프
+    cards14 = read_cards(14)
+    grades = [c for c in cards14 if c.get("type") == "grade"]
+    g_hit = len([c for c in grades if c.get("verdict") == "right"])
+    njudge = []
+    if NAG_JUDGE_LOG.exists():
+        for line in NAG_JUDGE_LOG.read_text(encoding="utf-8").splitlines()[-200:]:
+            try:
+                njudge.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    n_teach = len([j for j in njudge if j.get("verdict") == "teach"])
+    misses = read_misses(14)
+    today_cards = len([c for c in read_cards(0)])
+    # 게이트웨이
+    gw_on = subprocess.run(["pgrep", "-f", "gari gateway"], capture_output=True).returncode == 0
+
+    def row(cells, tag="td"):
+        return "<tr>" + "".join("<%s>%s</%s>" % (tag, c, tag) for c in cells) + "</tr>"
+
+    parts = ["<style>%s</style>" % _DASH_CSS,
+             "<h1>가리 관제 <span class='sub'>%s 갱신 · 자동(스윕마다)</span></h1>" % e(now[:16])]
+    # 헤더 카드들
+    chain = " → ".join(cfg.get("brain_chain", ["claude"]))
+    parts.append("<div class='grid'>")
+    parts.append("<div class='card'><h2 style='margin-top:0'>상태</h2>"
+                 "<div class='big %s'>%s</div><div class='sub'>마지막 정리 %s · 오늘 카드 %d장</div>"
+                 "<div style='margin-top:8px'><span class='tag'>게이트웨이 %s</span>"
+                 "<span class='tag'>증류실패 %s</span><span class='tag'>수색미스 %d</span></div></div>" % (
+        "ok" if not h.get("last_sweep_errors") else "bad",
+        "정상 가동" if not h.get("last_sweep_errors") else "스윕 오류 있음",
+        e(str(h.get("last_sweep", "?"))[11:16]), today_cards,
+        "ON(폰 연결)" if gw_on else "OFF", h.get("distill_failures", 0), len(misses)))
+    parts.append("<div class='card'><h2 style='margin-top:0'>뇌 배역 <span class='sub'>config 다이얼</span></h2>"
+                 "<table>%s%s%s%s</table><div class='sub' style='margin-top:6px'>폴백: %s</div></div>" % (
+        row(["접수·기억·검수", e(cfg["ask_model"])]), row(["위키·일반", e(cfg["ask_fallback_model"])]),
+        row(["판단 6좌석", "<b class='orange'>%s</b>" % e(cfg["deep_model"])]),
+        row(["증류", e(cfg["distill_model"])]), e(chain)))
+    parts.append("<div class='card'><h2 style='margin-top:0'>비용</h2>"
+                 "<div class='big'>$%.2f <span class='sub'>오늘</span></div>"
+                 "<div>$%.2f <span class='sub'>이번 달%s</span></div></div>" % (
+        cost_today, cost_month,
+        " / 예산 $%s" % cfg["monthly_budget_usd"] if cfg.get("monthly_budget_usd") else ""))
+    parts.append("</div>")
+    # 지금 뭐하나 — 실황 타임라인
+    parts.append("<h2>실황 — 최근 뇌 호출 20건 (하네싱이 도는 모습)</h2><table>"
+                 + row(["시각", "역할", "모델", "초", "비용", "결과"], "th"))
+    for c in recent:
+        parts.append(row([e(str(c.get("ts", ""))[11:19]), e(str(c.get("kind", "?"))),
+                          e(str(c.get("model", "?"))), "%.0f" % (c.get("sec") or 0),
+                          "$%.3f" % c["cost_usd"] if c.get("cost_usd") else "<span class='dim'>–</span>",
+                          "<span class='ok'>✓</span>" if c.get("ok") else "<span class='bad'>✗</span>"]))
+    parts.append("</table>")
+    # 진행 중 프로젝트·스테이크·예약
+    parts.append("<div class='grid'>")
+    pj_rows = "".join(row([e(t), "%d/%d" % (d, n), e({"running": "진행", "awaiting_approval": "결재 대기",
+                                                      "escalated": "막힘!"}.get(s, s))])
+                      for s, t, d, n in projects) or row(["<span class='dim'>진행 중인 프로젝트 파견 없음</span>", "", ""])
+    parts.append("<div class='card'><h2 style='margin-top:0'>프로젝트 파견</h2><table>%s</table></div>" % pj_rows)
+    st_rows = "".join(row(["①②③"[i], e(s.get("gain", ""))]) for i, s in
+                      enumerate((stakes.get("stakes") or [])[:3])) or row(["<span class='dim'>다음 아침에 산출</span>", ""])
+    parts.append("<div class='card'><h2 style='margin-top:0'>오늘의 스테이크</h2><table>%s</table></div>" % st_rows)
+    cr_rows = "".join(row([e(c.get("id", "")), e(("매%g h" % c["every_h"]) if c.get("every_h")
+                                                 else "매일 " + c.get("daily_at", "")),
+                           e(c.get("prompt", "")[:40])]) for c in crons)         or row(["<span class='dim'>예약 없음 — 채팅에서 '매일 ~해줘'</span>", "", ""])
+    parts.append("<div class='card'><h2 style='margin-top:0'>예약 자동화</h2><table>%s</table></div>" % cr_rows)
+    parts.append("</div>")
+    # 펄스
+    parts.append("<h2>프로젝트 실측 펄스 (git)</h2><table>"
+                 + row(["프로젝트", "마지막 커밋", "24h", "미커밋"], "th"))
+    for name, pj in sorted(pulse.items(), key=lambda kv: kv[1]["last_commit"], reverse=True)[:8]:
+        parts.append(row([e(name), e(pj["last_commit"]),
+                          ("<b class='orange'>%d</b>" % pj["commits_24h"]) if pj["commits_24h"] else "0",
+                          str(pj["dirty"]) if pj["dirty"] else "<span class='dim'>0</span>"]))
+    parts.append("</table>")
+    # 학습 루프 계기판
+    parts.append("<h2>쓸수록 똑똑해지는 루프 (14일)</h2><div class='grid'>")
+    parts.append("<div class='card'>참견 채점 <div class='big'>%d</div><div class='sub'>맞음 %d · 오발 %d</div></div>" % (
+        len(grades), g_hit, len(grades) - g_hit))
+    parts.append("<div class='card'>참견 자동판정 <div class='big'>%d</div><div class='sub'>가르침 %d · 회수 %d</div></div>" % (
+        len(njudge), n_teach, len(njudge) - n_teach))
+    parts.append("<div class='card'>못 찾은 질문 <div class='big'>%d</div><div class='sub'>기억 개선 재료</div></div>" % len(misses))
+    parts.append("</div>")
+    parts.append("<div class='sub' style='margin:24px 0'>이 페이지는 가리의 원장에서 자동 생성됩니다 — 서버 없음, 파일 하나. 새로고침은 스윕(10분)마다.</div>")
+    DASH_PATH.write_text("<!doctype html><meta charset='utf-8'><title>가리 관제</title>"
+                         + "".join(parts), encoding="utf-8")
+
+
+def cmd_dash(args):
+    """gari dash — 관제 페이지 재생성 + 열기."""
+    cfg = load_config()
+    build_dash(cfg)
+    print("관제 페이지: %s" % DASH_PATH)
+    if "--no-open" not in args:
+        subprocess.run(["open", str(DASH_PATH)])
     return 0
 
 
@@ -4056,7 +4213,7 @@ def main():
         "sweep": cmd_sweep, "report": cmd_report, "brief": cmd_brief,
         "status": cmd_status, "enqueue": cmd_enqueue, "done": cmd_done,
         "resolve": cmd_resolve, "log": cmd_log,
-        "ask": cmd_ask, "do": cmd_do, "pet": cmd_pet, "hud": cmd_hud, "weekly": cmd_weekly, "grade": cmd_grade, "chat": cmd_chat, "cost": cmd_cost, "doctor": cmd_doctor, "init": cmd_init, "wiki": cmd_wiki, "triage": cmd_triage, "snooze": cmd_snooze, "backfill": cmd_backfill, "project": cmd_project, "pulse": cmd_pulse, "merge": cmd_merge, "skill": cmd_skill, "cron": cmd_cron, "event": cmd_event, "gateway": cmd_gateway,
+        "ask": cmd_ask, "do": cmd_do, "pet": cmd_pet, "hud": cmd_hud, "weekly": cmd_weekly, "grade": cmd_grade, "chat": cmd_chat, "cost": cmd_cost, "doctor": cmd_doctor, "init": cmd_init, "wiki": cmd_wiki, "triage": cmd_triage, "snooze": cmd_snooze, "backfill": cmd_backfill, "project": cmd_project, "pulse": cmd_pulse, "merge": cmd_merge, "skill": cmd_skill, "cron": cmd_cron, "event": cmd_event, "gateway": cmd_gateway, "dash": cmd_dash,
     }
     args = sys.argv[1:]
     if not args or args[0] not in cmds:

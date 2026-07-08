@@ -283,6 +283,9 @@ def _cleanup():
 
 def run(argv):
     cases = [json.loads(l) for l in CORPUS.read_text(encoding="utf-8").splitlines()]
+    if "--resume" in argv and RESULTS.exists():
+        done_ids = {json.loads(l)["id"].replace("-f", "") for l in RESULTS.read_text(encoding="utf-8").splitlines() if l.strip()}
+        cases = [c for c in cases if c["id"] not in done_ids]
     if "--retry" in argv:
         prev = [json.loads(l) for l in Path(argv[argv.index("--retry") + 1]).read_text(encoding="utf-8").splitlines()]
         failed_ids = {r["id"].replace("-f", "") for r in prev if not r["ok"]}
@@ -294,14 +297,21 @@ def run(argv):
         cases = cases[:int(argv[argv.index("--limit") + 1])]
     print("발사: %d케이스 (동시 3)" % len(cases))
     results = []
+    if "--resume" not in argv:
+        RESULTS.write_text("", encoding="utf-8")
+    done_flag = UC_DIR / "DONE"
+    if done_flag.exists():
+        done_flag.unlink()
     with ThreadPoolExecutor(max_workers=3) as ex:
         for i, out in enumerate(ex.map(_run_case, cases)):
             results.extend(out)
+            with open(RESULTS, "a", encoding="utf-8") as rf:
+                for r in out:
+                    rf.write(json.dumps(r, ensure_ascii=False) + "\n")
             for r in out:
                 print("%s %-5s %-38s %5.1fs %s" % ("✓" if r["ok"] else "✗", r["id"],
                       r["q"][:38], r["sec"], "; ".join(r["issues"])[:60]), flush=True)
-    RESULTS.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in results) + "\n",
-                       encoding="utf-8")
+    done_flag.write_text("done", encoding="utf-8")
     _cleanup()
     fails = [r for r in results if not r["ok"]]
     from collections import Counter
