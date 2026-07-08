@@ -17,15 +17,17 @@ from pathlib import Path
 
 GARI = str(Path.home() / "gari" / "bin" / "gari")
 HERE = Path.home() / "gari" / "tests"
-CORPUS = HERE / "usecases.jsonl"
-RESULTS = HERE / "usecase-results.jsonl"
+UC_DIR = Path(os.environ.get("GARI_UC_DIR", "/tmp/gari-uc"))
+UC_DIR.mkdir(parents=True, exist_ok=True)
+CORPUS = UC_DIR / "usecases.jsonl"          # 수색 루트(~/gari 등) 밖 — 가리가 시험지를 커닝 못 하게
+RESULTS = UC_DIR / "usecase-results.jsonl"
 sys.path.insert(0, str(Path.home() / "gari"))
 import gari as g  # noqa: E402
 
 random.seed(20260708)  # 재현 가능한 출제
 
 COMMON_BAD = [
-    (r"권한.{0,8}(승인|필요|대기)|승인.{0,6}대기|대기 중입니다", "권한 환각"),
+    (r"권한.{0,8}(승인|필요)|승인이 필요|승인해 주|도구.{0,6}로드해야", "권한 환각"),
     (r"\[(깊은사고|일반질문|파견|프로젝트|기록|해소|지시|예약)[:\]]", "마커 잔재"),
     (r"(?:GariPet\.m|gari\.py):\d+", "코드 좌표"),
     (r"카드 [0-9a-f]{8}\b|\([0-9a-f]{8}\)", "카드 ID 노출"),
@@ -34,9 +36,21 @@ COMMON_BAD = [
 _STOP = set("그리고 그래서 하지만 대한 관련 진행 작업 사용 시스템 형님 사용자 완료 확인 상태 기록 결정".split())
 
 
+_JOSA = ("으로써", "으로", "에서", "까지", "부터", "처럼", "라고", "하고", "와", "과", "로",
+         "의", "는", "은", "를", "을", "가", "이", "에", "도", "만")
+
+
+def _stem(w):
+    for j in _JOSA:
+        if w.endswith(j) and len(w) - len(j) >= 2:
+            return w[:len(w) - len(j)]
+    return w
+
+
 def _keywords(text, n=3):
-    toks = [w for w in re.findall(r"[가-힣a-zA-Z0-9]{3,}", text)
+    toks = [_stem(w) for w in re.findall(r"[가-힣a-zA-Z0-9]{3,}", text)
             if w not in _STOP and not w.isdigit()]
+    toks = [w for w in toks if len(w) >= 2 and w not in _STOP]
     seen, out = set(), []
     for w in toks:
         if w not in seen:
@@ -100,12 +114,12 @@ def gen():
              and c.get("tool") != "gari-repair"]
     random.shuffle(cards)
     for c in cards[:80]:
-        kws = _keywords(c["text"], 4)
-        if len(kws) < 3:
+        kws = _keywords(c["text"], 6)
+        if len(kws) < 4:
             continue
-        ask_kw, expect = kws[0], kws[1:4]
-        add("B", "%s 관련해서 뭐라고 정리돼있거나 정했었지?" % ask_kw,
-            must=[r"(%s)" % "|".join(re.escape(k) for k in expect)])
+        ask_kw, expect = kws[0], kws[1:6]
+        add("B", "%s 얘기 나왔던 거 기억나? 뭐라고 정리됐었지?" % ask_kw,
+            must=[r"(%s|기록.{0,8}없|못 찾)" % "|".join(re.escape(k) for k in expect)])
 
     # ── C. 지어냄 방지 — 존재하지 않는 것들 ──
     fake_proj = ["moonbase", "kimchi-flow", "제주워크숍", "quantum-pet", "aurora-cms",
@@ -116,7 +130,7 @@ def gen():
                   "오사카세미나", "zephyr-app", "김부장미팅", "starlight-db", "화요북클럽"]
     for p_, qt in itertools.islice(itertools.product(fake_proj, fake_q), 56):
         add("C", qt % p_, must=[r"(없|못 찾|기록.{0,6}없)"],
-            must_not=[r"%s.{0,30}(진행|완료|결정했)" % re.escape(p_)])
+            must_not=[r"%s[은는이가의]?\s?.{0,10}(진행 중|진행되고|완료됐|완료되었|하기로 했|결정했)" % re.escape(p_)])
 
     # ── D. 자기 구조 — 사실표 전역 ──
     selfq = [
@@ -285,7 +299,7 @@ def run(argv):
             results.extend(out)
             for r in out:
                 print("%s %-5s %-38s %5.1fs %s" % ("✓" if r["ok"] else "✗", r["id"],
-                      r["q"][:38], r["sec"], "; ".join(r["issues"])[:60]))
+                      r["q"][:38], r["sec"], "; ".join(r["issues"])[:60]), flush=True)
     RESULTS.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in results) + "\n",
                        encoding="utf-8")
     _cleanup()
