@@ -1509,73 +1509,110 @@ def cmd_gateway(args):
 DASH_PATH = STORE / "dash.html"
 
 _DASH_CSS = """
-:root{--bg:#fff;--fg:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#e4e4e7;
---card:#fff;--accent:#e8590c;--ok:#16a34a;--bad:#dc2626;--radius:0.625rem}
-@media(prefers-color-scheme:dark){:root{--bg:#09090b;--fg:#fafafa;--muted:#18181b;
---muted-fg:#a1a1aa;--border:#27272a;--card:#09090b}}
-*{box-sizing:border-box}body{font-family:-apple-system,'Pretendard','Inter',sans-serif;
-background:var(--bg);color:var(--fg);max-width:1120px;margin:0 auto;padding:48px 24px 64px;
-font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased}
-h1{font-size:30px;letter-spacing:-.025em;margin:0 0 4px;font-weight:700}
-.lead{color:var(--muted-fg);font-size:15px;max-width:720px;margin:0 0 8px}
-h2{font-size:18px;letter-spacing:-.02em;margin:0 0 2px;font-weight:600}
-.desc{color:var(--muted-fg);font-size:13.5px;margin:0 0 14px;max-width:760px}
-section{margin-top:44px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px 22px}
-.grid{display:grid;gap:16px}.g3{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
-.badge{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);
-border-radius:9999px;padding:3px 12px;font-size:12.5px;font-weight:500;color:var(--fg);background:var(--muted)}
-.badge .dot{width:7px;height:7px;border-radius:50%}
-.kpi{font-size:26px;font-weight:700;letter-spacing:-.02em}
-.kpi-label{font-size:12.5px;color:var(--muted-fg);font-weight:500;text-transform:none;margin-bottom:6px}
-.kpi-sub{font-size:12.5px;color:var(--muted-fg);margin-top:4px}
+:root{--bg:#fafafa;--panel:#fff;--fg:#111113;--muted:#f4f4f5;--muted-fg:#71717a;
+--border:#e4e4e7;--accent:#e8590c;--accent-soft:#fff3ec;--ok:#16a34a;--bad:#dc2626;--r:12px}
+@media(prefers-color-scheme:dark){:root{--bg:#0c0c0d;--panel:#131315;--fg:#f4f4f5;--muted:#1c1c1f;
+--muted-fg:#9f9fa8;--border:#26262a;--accent-soft:#2a1a10}}
+*{box-sizing:border-box;margin:0}
+body{font-family:-apple-system,'Pretendard','Inter',sans-serif;background:var(--bg);color:var(--fg);
+font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased;
+display:grid;grid-template-columns:216px 1fr 384px;height:100vh;overflow:hidden}
+/* ── 사이드바 ── */
+aside{border-right:1px solid var(--border);background:var(--panel);padding:20px 12px;
+display:flex;flex-direction:column;gap:2px}
+.brand{display:flex;align-items:center;gap:10px;padding:6px 10px 18px}
+.brand .fish{width:30px;height:30px;border-radius:9px;background:var(--accent);color:#fff;
+display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800}
+.brand b{font-size:16px;letter-spacing:-.02em}
+.brand .st{font-size:11px;color:var(--muted-fg);display:flex;align-items:center;gap:5px}
+.pulse{width:7px;height:7px;border-radius:50%;background:var(--ok);animation:pl 2.4s infinite}
+.pulse.bad{background:var(--bad)}
+@keyframes pl{0%,100%{opacity:1}50%{opacity:.35}}
+nav button{display:flex;align-items:center;justify-content:space-between;width:100%;
+border:0;background:none;color:var(--muted-fg);font-size:13.5px;font-weight:500;
+padding:9px 12px;border-radius:8px;cursor:pointer;transition:all .12s}
+nav button:hover{background:var(--muted);color:var(--fg)}
+nav button.on{background:var(--accent-soft);color:var(--accent);font-weight:650}
+nav .cnt{font-size:11px;background:var(--muted);color:var(--muted-fg);border-radius:99px;
+padding:1px 8px;font-weight:600}
+nav button.on .cnt{background:var(--accent);color:#fff}
+aside .foot{margin-top:auto;padding:12px 10px;border-top:1px solid var(--border);
+font-size:11.5px;color:var(--muted-fg);line-height:1.7}
+/* ── 메인 ── */
+main{overflow-y:auto;padding:36px 40px 80px}
+.view{display:none;max-width:880px;animation:fadein .18s ease}
+.view.on{display:block}
+@keyframes fadein{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+h1{font-size:24px;letter-spacing:-.03em;margin-bottom:4px;font-weight:700}
+.lead{color:var(--muted-fg);font-size:14px;margin-bottom:26px;max-width:640px}
+h2{font-size:13px;color:var(--muted-fg);font-weight:600;text-transform:none;
+margin:30px 0 10px;letter-spacing:.01em}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:20px 22px}
+.grid{display:grid;gap:14px}.g2{grid-template-columns:1fr 1fr}.g3{grid-template-columns:repeat(3,1fr)}
+.stake{display:flex;gap:14px;align-items:flex-start;padding:18px 20px;background:var(--panel);
+border:1px solid var(--border);border-radius:var(--r);margin-bottom:10px;transition:border-color .15s}
+.stake:hover{border-color:var(--muted-fg)}
+.stake .n{flex-shrink:0;width:26px;height:26px;border-radius:50%;background:var(--fg);color:var(--bg);
+display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700}
+.stake .gain{font-size:15px;font-weight:600;letter-spacing:-.01em;line-height:1.5}
+.stake .lb{font-size:12.5px;color:var(--muted-fg);margin-top:3px}
 table{border-collapse:collapse;width:100%;font-size:13.5px}
-th{color:var(--muted-fg);font-weight:500;font-size:12px;text-align:left;padding:8px 12px;border-bottom:1px solid var(--border)}
-td{padding:9px 12px;border-bottom:1px solid var(--border)}tr:last-child td{border-bottom:none}
-tr:hover td{background:var(--muted)}
+th{color:var(--muted-fg);font-weight:500;font-size:11.5px;text-align:left;padding:8px 12px;
+border-bottom:1px solid var(--border)}
+td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+tr:last-child td{border-bottom:none}
+tbody tr{transition:background .1s}tbody tr:hover{background:var(--muted)}
+.num{font-variant-numeric:tabular-nums}
+.kpi{font-size:24px;font-weight:700;letter-spacing:-.02em}.kpi-l{font-size:12px;color:var(--muted-fg);
+font-weight:500;margin-bottom:6px}.kpi-s{font-size:12px;color:var(--muted-fg);margin-top:4px;line-height:1.5}
 .ok{color:var(--ok)}.bad{color:var(--bad)}.dim{color:var(--muted-fg)}.accent{color:var(--accent);font-weight:600}
-.flow{display:flex;gap:0;flex-wrap:wrap;align-items:stretch}
-.step{flex:1;min-width:170px;border:1px solid var(--border);border-radius:var(--radius);
-padding:16px;margin:0 12px 12px 0;position:relative;background:var(--card)}
-.step:after{content:'→';position:absolute;right:-14px;top:42%;color:var(--muted-fg);font-size:15px}
-.step:last-child:after{content:''}
-.step .n{display:inline-flex;width:22px;height:22px;border-radius:50%;background:var(--fg);color:var(--bg);
-align-items:center;justify-content:center;font-size:12px;font-weight:700;margin-bottom:8px}
-.step b{display:block;font-size:14px;margin-bottom:4px}
-.step span{font-size:12.5px;color:var(--muted-fg);line-height:1.5;display:block}
-.hint{background:var(--muted);border-radius:var(--radius);padding:12px 16px;font-size:13px;
-color:var(--muted-fg);margin-top:12px}
-footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--border);color:var(--muted-fg);font-size:12.5px}
-body{padding-right:404px}
-#chat{position:fixed;top:0;right:0;width:380px;height:100vh;border-left:1px solid var(--border);
-background:var(--card);display:flex;flex-direction:column}
-#chat header{padding:16px 18px;border-bottom:1px solid var(--border)}
-#chat header b{font-size:15px}#chat header .sub{font-size:12px;color:var(--muted-fg)}
-#msgs{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
-.msg{max-width:86%;padding:9px 13px;border-radius:14px;font-size:13.5px;line-height:1.55;white-space:pre-wrap;word-break:break-word}
+.badge{display:inline-block;border-radius:99px;padding:2px 10px;font-size:11.5px;font-weight:600;
+background:var(--muted);color:var(--muted-fg)}
+.badge.live{background:var(--accent-soft);color:var(--accent)}
+button.act{border:1px solid var(--border);background:var(--panel);color:var(--fg);border-radius:7px;
+padding:4px 12px;font-size:12px;font-weight:600;cursor:pointer;transition:all .12s}
+button.act:hover{border-color:var(--fg)}
+button.act.pri{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+button.act:disabled{opacity:.4;cursor:default}
+.flow{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+.step{border:1px solid var(--border);border-radius:var(--r);padding:16px;background:var(--panel)}
+.step .sn{font-size:11px;font-weight:700;color:var(--accent);margin-bottom:6px}
+.step b{display:block;font-size:14px;margin-bottom:5px}
+.step span{font-size:12.5px;color:var(--muted-fg);line-height:1.55}
+.hint{background:var(--muted);border-radius:10px;padding:12px 16px;font-size:12.5px;
+color:var(--muted-fg);line-height:1.6}
+.empty{color:var(--muted-fg);font-size:13px;padding:22px;text-align:center}
+/* ── 채팅 ── */
+#chat{border-left:1px solid var(--border);background:var(--panel);display:flex;flex-direction:column}
+#chat .hd{padding:18px 20px 14px;border-bottom:1px solid var(--border)}
+#chat .hd b{font-size:14.5px}#chat .hd .sub{font-size:11.5px;color:var(--muted-fg);margin-top:2px}
+#msgs{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
+.msg{max-width:88%;padding:9px 13px;border-radius:14px;font-size:13.5px;line-height:1.55;
+white-space:pre-wrap;word-break:break-word;animation:fadein .15s}
 .me{align-self:flex-end;background:var(--fg);color:var(--bg);border-bottom-right-radius:4px}
 .ga{align-self:flex-start;background:var(--muted);border-bottom-left-radius:4px}
-.ga.think{color:var(--muted-fg);font-style:italic}
-#inbar{display:flex;gap:8px;padding:12px;border-top:1px solid var(--border)}
-#inp{flex:1;border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:14px;
-background:var(--bg);color:var(--fg);outline:none}#inp:focus{border-color:var(--muted-fg)}
-button{border:1px solid var(--border);background:var(--fg);color:var(--bg);border-radius:8px;
-padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer}
-button.ghost{background:transparent;color:var(--fg);font-weight:500;padding:4px 10px;font-size:12px}
-button:disabled{opacity:.5;cursor:default}
-.actrow{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
-@media(max-width:900px){body{padding-right:24px}#chat{position:static;width:auto;height:480px;
-border:1px solid var(--border);border-radius:var(--radius);margin-top:32px}}
+.ga.think{color:var(--muted-fg)}
+#inbar{display:flex;gap:8px;padding:14px;border-top:1px solid var(--border)}
+#inp{flex:1;border:1px solid var(--border);border-radius:9px;padding:10px 13px;font-size:14px;
+background:var(--bg);color:var(--fg);outline:none;transition:border .12s}
+#inp:focus{border-color:var(--accent)}
+#send{border:0;background:var(--accent);color:#fff;border-radius:9px;padding:0 16px;
+font-size:13px;font-weight:700;cursor:pointer}
+#send:disabled{opacity:.5}
+@media(max-width:1100px){body{grid-template-columns:64px 1fr 340px}
+.brand b,.brand .st,nav button span.t,aside .foot{display:none}
+nav button{justify-content:center}}
 """
 
 
 def build_dash(cfg):
-    """관제 페이지 v2 — shadcn 디자인 토큰, '처음 보는 사람에게 과한 친절' 문법.
-    store 실데이터만으로 정적 재생성 (서버·JS·의존성 없음). 스윕마다 갱신."""
+    """관제실 v5 — 본체. 좌측 사이드바 셸(레퍼런스 수렴: hermes Status·openclaw Overview 패턴),
+    랜딩=오늘, 행 인라인 액션, 뷰 전환은 클라이언트에서 즉답. 데이터는 store 실측만."""
     import html as _html
     e = _html.escape
     now = now_iso()
     h = load_json(HEALTH_PATH, {})
+    healthy = not h.get("last_sweep_errors")
     calls = []
     if USAGE_LOG.exists():
         for line in USAGE_LOG.read_text(encoding="utf-8").splitlines()[-400:]:
@@ -1583,20 +1620,14 @@ def build_dash(cfg):
                 calls.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
-    recent = list(reversed(calls[-18:]))
     today = datetime.now().strftime("%Y-%m-%d")
     month = datetime.now().strftime("%Y-%m")
     cost_today = sum(c.get("cost_usd") or 0 for c in calls if str(c.get("ts", "")).startswith(today))
     cost_month = sum(c.get("cost_usd") or 0 for c in calls if str(c.get("ts", "")).startswith(month))
-    projects = []
-    if PROJECTS_DIR.exists():
-        for pf in sorted(PROJECTS_DIR.glob("p-*.json")):
-            pj = load_json(pf, {})
-            if pj.get("status") in ("running", "awaiting_approval", "escalated"):
-                done_n = len([m for m in pj.get("milestones", []) if m["status"] == "done"])
-                projects.append((pj.get("status"), pj.get("title", ""), done_n,
-                                 len(pj.get("milestones", [])), pj.get("id", "")))
+    cards14 = read_cards(14)
+    pend_all = open_pendings(read_cards_all())
     stakes = load_json(STORE / "stakes.json", {})
+    pulse = load_json(PULSE_PATH, {}).get("projects", {})
     crons = []
     if CRONS_PATH.exists():
         for line in CRONS_PATH.read_text(encoding="utf-8").splitlines():
@@ -1604,8 +1635,16 @@ def build_dash(cfg):
                 crons.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
-    pulse = load_json(PULSE_PATH, {}).get("projects", {})
-    cards14 = read_cards(14)
+    projects = []
+    if PROJECTS_DIR.exists():
+        for pf in sorted(PROJECTS_DIR.glob("p-*.json"), reverse=True):
+            pj = load_json(pf, {})
+            dn = len([m for m in pj.get("milestones", []) if m["status"] == "done"])
+            projects.append((pj.get("id", ""), pj.get("status", ""), pj.get("title", ""),
+                             dn, len(pj.get("milestones", []))))
+    live_pj = [x for x in projects if x[1] in ("running", "awaiting_approval", "escalated")]
+    works = sorted((GARI_HOME / "works").glob("*.md"), reverse=True)[:10] \
+        if (GARI_HOME / "works").exists() else []
     grades = [c for c in cards14 if c.get("type") == "grade"]
     g_hit = len([c for c in grades if c.get("verdict") == "right"])
     njudge = []
@@ -1615,234 +1654,256 @@ def build_dash(cfg):
                 njudge.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
-    n_teach = len([j for j in njudge if j.get("verdict") == "teach"])
     misses = read_misses(14)
-    today_cards = len(read_cards(0))
     gw_on = subprocess.run(["pgrep", "-f", "gari gateway"], capture_output=True).returncode == 0
-    healthy = not h.get("last_sweep_errors")
+    autoruns = [c for c in cards14 if c.get("tool") in ("gari-cron", "gari-do", "gari-pm")][-12:][::-1]
+    recent_dec = [c for c in cards14 if c.get("type") == "decision"][-20:][::-1]
+    recent_calls = list(reversed(calls[-18:]))
 
-    _KIND_KR = {"ask": "대화 접수", "ask-deep": "깊은 판단", "ask-general": "일반·웹 답변",
-                "ask-docs": "문서 수색", "ask-attach": "이미지 보기", "distill": "대화→기억 증류",
-                "wiki": "프로젝트 위키 갱신", "triage": "미결 정리 판정", "triage-kinds": "미결 분류",
-                "verify": "완료 주장 실측 검수", "stakes": "오늘의 3가지 선별", "mentor": "멘토 리뷰",
-                "project-plan": "큰일 계획서 작성", "project-verify": "파견 결과 검수",
-                "project-replan": "계획 재설계", "weekly-reflect": "주간 반성", "nag-judge": "참견 품질 판정",
-                "cron": "예약 실행", "do-api": "비상 뇌 파견"}
-
-    def row(cells, tag="td"):
-        return "<tr>" + "".join("<%s>%s</%s>" % (tag, c, tag) for c in cells) + "</tr>"
-
-    p = ["<style>%s</style>" % _DASH_CSS]
-    # ── 히어로: 정체 + 상태 배지 ──
-    p.append("<h1>가리 관제실</h1>"
-             "<p class='lead'>가리는 아이루의 개인 AI 비서입니다. 모든 AI 도구와 나눈 대화를 스스로 모아 기억하고, "
-             "아침마다 중요한 것 3가지를 골라 보고하며, 시킨 일은 다른 AI에게 맡긴 뒤 결과를 직접 검사합니다. "
-             "이 페이지는 그 모든 움직임을 실시간으로 보여주는 창입니다.</p>")
-    p.append("<div class='sub' style='margin-top:10px'>"
-             "<a href='#inbox' style='color:var(--muted-fg)'>처리함</a> · <a href='#today' style='color:var(--muted-fg)'>오늘 카드</a> · "
-             "<a href='#auto' style='color:var(--muted-fg)'>자동화</a> · <a href='#log' style='color:var(--muted-fg)'>기록</a></div>")
-    p.append("<div style='display:flex;gap:8px;flex-wrap:wrap;margin-top:14px'>"
-             "<span class='badge'><span class='dot' style='background:%s'></span>%s</span>"
-             "<span class='badge'>📱 폰 연결 %s</span>"
-             "<span class='badge'>오늘 기억 %d장</span>"
-             "<span class='badge'>%s 갱신 · 10분마다 자동</span></div>" % (
-        "var(--ok)" if healthy else "var(--bad)", "정상 가동 중" if healthy else "점검 필요",
-        "됨" if gw_on else "안 됨", today_cards, e(now[11:16])))
-    # ── 절차 파이프라인 (과한 친절의 핵심) ──
-    p.append("<section><h2>가리는 이렇게 일합니다</h2>"
-             "<p class='desc'>사람이 버튼을 누르지 않아도, 아래 다섯 단계가 10분마다 자동으로 돕니다.</p>"
-             "<div class='flow'>"
-             "<div class='step'><span class='n'>1</span><b>듣기</b><span>Claude·Codex 등 모든 AI와 나눈 대화, "
-             "그리고 각 프로젝트 폴더의 실제 코드 변화(git)까지 스스로 수집합니다.</span></div>"
-             "<div class='step'><span class='n'>2</span><b>기억하기</b><span>대화에서 결정·미결·교정만 골라 "
-             "카드로 만들고, 프로젝트마다 '현재 상태 문서'를 자동 갱신합니다.</span></div>"
-             "<div class='step'><span class='n'>3</span><b>보고하기</b><span>매일 아침 9시, 기억 전체를 뒤져 "
-             "'오늘 중요한 것 3가지'를 골라 이유와 함께 보고합니다.</span></div>"
-             "<div class='step'><span class='n'>4</span><b>실행하기</b><span>시킨 일은 실무 AI에게 맡기고, "
-             "끝나면 결과물을 직접 열어 검사합니다. 통과 못 하면 다시 시키거나 사람을 부릅니다.</span></div>"
-             "<div class='step'><span class='n'>5</span><b>배우기</b><span>지적받은 것·헛짚은 참견·못 찾은 질문을 "
-             "매주 스스로 복기해 다음 주의 행동 규칙을 제안합니다.</span></div>"
-             "</div>"
-             "<div class='hint'>💡 가리 자체는 판단·기억을 맡고, 무거운 사고는 외부 AI 모델을 부품처럼 갈아 끼우며 빌려 씁니다. "
-             "그래서 특정 모델이 사라져도 가리는 계속 삽니다 — 아래 '빌려 쓰는 뇌' 표가 지금의 배역입니다.</div></section>")
-    # ── KPI 3장 ──
-    p.append("<section><div class='grid g3'>")
-    p.append("<div class='card'><div class='kpi-label'>시스템 상태</div><div class='kpi %s'>%s</div>"
-             "<div class='kpi-sub'>마지막 수집 %s · 문제가 생기면 가리가 먼저 알림을 보냅니다</div></div>" % (
-        "ok" if healthy else "bad", "정상" if healthy else "오류",
-        e(str(h.get("last_sweep", "?"))[11:16])))
-    p.append("<div class='card'><div class='kpi-label'>오늘 쓴 비용</div><div class='kpi'>$%.2f</div>"
-             "<div class='kpi-sub'>이번 달 누적 $%.2f — AI 모델을 빌려 쓴 값 전부가 여기 잡힙니다</div></div>" % (
-        cost_today, cost_month))
-    p.append("<div class='card'><div class='kpi-label'>못 찾은 질문 (2주)</div><div class='kpi'>%d</div>"
-             "<div class='kpi-sub'>주인이 물었는데 기억에서 못 찾은 횟수 — 가리의 기억력 개선 재료입니다</div></div>" % len(misses))
-    p.append("</div></section>")
-    # ── 실황 ──
-    p.append("<section><h2>지금 무슨 일을 하고 있나</h2>"
-             "<p class='desc'>가리가 AI 뇌를 부른 최근 기록입니다. 한 줄 = 한 번의 생각. "
-             "'역할'이 그 생각의 용도, '비용'이 그 생각의 값입니다.</p><div class='card' style='padding:6px 8px'><table>"
-             + row(["시각", "무슨 생각을", "빌린 뇌", "걸린 시간", "비용", "성공"], "th"))
-    for c in recent:
-        kind = _KIND_KR.get(str(c.get("kind", "")), str(c.get("kind", "?")))
-        p.append(row([e(str(c.get("ts", ""))[11:19]), e(kind), e(str(c.get("model", "?"))),
-                      "%.0f초" % (c.get("sec") or 0),
-                      "$%.3f" % c["cost_usd"] if c.get("cost_usd") else "<span class='dim'>–</span>",
-                      "<span class='ok'>✓</span>" if c.get("ok") else "<span class='bad'>✗</span>"]))
-    p.append("</table></div></section>")
-    # ── 배역 + 오늘의 3가지 + 예약 ──
-    p.append("<section><div class='grid g3'>")
-    p.append("<div class='card'><h2>빌려 쓰는 뇌</h2><p class='desc'>일의 무게에 따라 다른 모델을 씁니다 — "
-             "잔일은 싸고 빠르게, 판단은 가장 좋은 것으로.</p><table>%s%s%s%s</table>"
-             "<div class='hint'>모두 죽으면: %s 순서로 대체</div></div>" % (
-        row(["빠른 응대·기억", e(cfg["ask_model"])]), row(["문서·일반 지식", e(cfg["ask_fallback_model"])]),
-        row(["깊은 판단", "<span class='accent'>%s</span>" % e(cfg["deep_model"])]),
-        row(["기억 만들기", e(cfg["distill_model"])]),
-        e(" → ".join(cfg.get("brain_chain", ["claude"])))))
-    def st_cell(s):
-        cell = e(s.get("gain", ""))
-        if s.get("action") == "resolve" and s.get("id"):
-            cell += ("<div class='actrow'><button class='ghost' onclick=\"act('/api/resolve','%s',this)\">완료</button>"
-                     "<button class='ghost' onclick=\"act('/api/snooze','%s',this)\">나중에</button></div>"
-                     % (e(s["id"]), e(s["id"])))
-        return cell
-    st_rows = "".join(row(["<b>%s</b>" % "①②③"[i], st_cell(s)])
-                      for i, s in enumerate((stakes.get("stakes") or [])[:3])) \
-        or row(["<span class='dim'>다음 아침 보고 때 산출됩니다</span>", ""])
-    p.append("<div class='card'><h2>오늘의 3가지</h2><p class='desc'>가리가 기억 전체에서 고른, "
-             "지금 주인에게 가장 중요한 일 — '하면 뭐가 달라지는가'로 말합니다.</p><table>%s</table></div>" % st_rows)
-    cr_rows = "".join(row([e(("매 %g시간" % c["every_h"]) if c.get("every_h") else "매일 " + c.get("daily_at", "")),
-                           e(c.get("prompt", "")[:44])]) for c in crons)         or row(["<span class='dim'>아직 없음</span>", "<span class='dim'>채팅에 '매일 아침 ~해줘'라고 말하면 생깁니다</span>"])
-    p.append("<div class='card'><h2>예약된 자동 업무</h2><p class='desc'>주인이 말로 등록한 반복 임무 — "
-             "때가 되면 가리가 알아서 실행하고 결과를 알립니다.</p><table>%s</table></div>" % cr_rows)
-    p.append("</div></section>")
-    # ── 파견 + 펄스 ──
-    pj_rows = "".join(row([e(t), "%d/%d 단계" % (d, n),
-                           {"running": "<span class='ok'>진행 중</span>",
-                            "awaiting_approval": "결재 대기 <button class='ghost' onclick=\"act('/api/approve','%s',this)\">승인</button>" % e(pid),
-                            "escalated": "<span class='bad'>막힘 — 판단 필요</span>"}.get(s, s)])
-                      for s, t, d, n, pid in projects)         or row(["<span class='dim'>지금은 없음</span>", "", "<span class='dim'>큰일을 시키면 여기 단계별 진행이 뜹니다</span>"])
-    p.append("<section><div class='grid g3'>")
-    p.append("<div class='card' style='grid-column:span 1'><h2>맡겨둔 큰일</h2>"
-             "<p class='desc'>가리가 계획을 쪼개 실무 AI에게 나눠주고, 단계마다 결과를 검사하며 끌고 가는 프로젝트.</p>"
-             "<table>%s</table></div>" % pj_rows)
-    pl_rows = "".join(row([e(name), e(pj["last_commit"][5:16]),
-                           ("<span class='accent'>%d건</span>" % pj["commits_24h"]) if pj["commits_24h"] else "<span class='dim'>0</span>",
-                           ("%d개" % pj["dirty"]) if pj["dirty"] else "<span class='dim'>없음</span>"])
-                      for name, pj in sorted(pulse.items(), key=lambda kv: kv[1]["last_commit"], reverse=True)[:8])
-    p.append("<div class='card' style='grid-column:span 2'><h2>프로젝트 실제 활동 (git 실측)</h2>"
-             "<p class='desc'>대화에 안 나온 코드 작업까지 가리가 직접 확인한 사실 — '미커밋'이 쌓인 채 멈춘 곳은 유실 위험입니다.</p>"
-             "<table>%s%s</table></div>" % (row(["프로젝트", "마지막 커밋", "24시간 커밋", "미커밋 변경"], "th"), pl_rows))
-    p.append("</div></section>")
-    # ── 학습 루프 ──
-    p.append("<section><h2>쓸수록 똑똑해지는 중인가</h2>"
-             "<p class='desc'>가리는 자기 실수를 스스로 세고 있습니다. 이 숫자들이 학습의 원료입니다 (최근 2주).</p>"
-             "<div class='grid g3'>")
-    p.append("<div class='card'><div class='kpi-label'>주인의 채점</div><div class='kpi'>%d</div>"
-             "<div class='kpi-sub'>가리의 참견에 맞음 %d · 오발 %d — 맞은 참견은 다음 참견의 교본이 됩니다</div></div>" % (
-        len(grades), g_hit, len(grades) - g_hit))
-    p.append("<div class='card'><div class='kpi-label'>참견 자가 검열</div><div class='kpi'>%d</div>"
-             "<div class='kpi-sub'>내보내기 전 스스로 판정 — 가르침 %d건 통과, 헛짚음 %d건은 스스로 삼켰습니다</div></div>" % (
-        len(njudge), n_teach, len(njudge) - n_teach))
-    p.append("<div class='card'><div class='kpi-label'>주간 반성</div><div class='kpi'>월요일</div>"
-             "<div class='kpi-sub'>한 주의 교정·실수를 복기해 '다음 주의 나를 바꿀 규칙'을 스스로 제안합니다</div></div>")
-    p.append("</div></section>")
-    pend_all = open_pendings(read_cards_all())
-    def pend_row(c):
-        return row([e(_proj_short(c)), e(c["text"][:110]),
-                    ("<div class='actrow'><button class='ghost' onclick=\"act('/api/resolve','%s',this)\">완료</button>"
-                     "<button class='ghost' onclick=\"act('/api/snooze','%s',this)\">나중에</button></div>"
-                     % (e(c.get("id", "")), e(c.get("id", "")))) if c.get("id") else ""])
-    p.append("<section id='inbox'><h2>처리함 — 열린 티켓 %d건</h2>"
-             "<p class='desc'>가리가 대화에서 건져 올린 '아직 안 닫힌 일' 전부입니다. 완료면 닫고, 지금 결정할 수 없으면 나중에(7일 뒤 복귀)로 재워두세요.</p>"
-             "<div class='card' style='padding:6px 8px'><table>%s</table></div></section>" % (
-        len(pend_all), "".join(pend_row(c) for c in pend_all[-30:][::-1])
-        or row(["<span class='dim'>비어 있음 — 좋은 상태입니다</span>", "", ""])))
     def _read_txt(name):
         f = STORE / name
         return f.read_text(encoding="utf-8").strip() if f.exists() else ""
-    today_q = _read_txt("question.txt")
+    today_q, today_nag = _read_txt("question.txt"), _read_txt("nag.txt")
     today_step = _read_txt("next-step.txt").replace("\n", " · ")
-    today_nag = _read_txt("nag.txt")
     mentor_line = ""
     if MENTOR_PATH.exists():
         for _l in MENTOR_PATH.read_text(encoding="utf-8").splitlines():
             if _l.startswith("오늘의 훈련:"):
                 mentor_line = _l.split(":", 1)[1].strip()
                 break
-    p.append("<section id='today'><h2>오늘 카드 — 아침 산출</h2>"
-             "<p class='desc'>매일 아침 가리가 기억 전체에서 뽑는 것들: 오늘의 한 칸(행동), 답이 필요한 질문, 참견과 멘토 훈련.</p>"
-             "<div class='grid g3'>"
-             "<div class='card'><div class='kpi-label'>오늘의 한 칸</div>%s</div>"
-             "<div class='card'><div class='kpi-label'>가리의 질문</div>%s"
-             "<div class='actrow'><button class='ghost' onclick=\"document.getElementById('inp').value='아침 질문에 답할게: ';document.getElementById('inp').focus()\">채팅으로 답하기</button></div></div>"
-             "<div class='card'><div class='kpi-label'>참견 · 멘토 훈련</div>%s<div class='hint' style='margin-top:8px'>%s</div></div>"
-             "</div></section>" % (
-        e(today_step) or "<span class='dim'>아침 보고 때 산출</span>",
-        e(today_q) or "<span class='dim'>없음</span>",
-        e(today_nag) or "<span class='dim'>없음</span>",
-        e(mentor_line) or ""))
-    autoruns = [c for c in cards14 if c.get("tool") in ("gari-cron", "gari-do", "gari-pm")][-12:][::-1]
-    works = sorted((GARI_HOME / "works").glob("*.md"), reverse=True)[:8] if (GARI_HOME / "works").exists() else []
-    all_pj = []
-    if PROJECTS_DIR.exists():
-        for pf in sorted(PROJECTS_DIR.glob("p-*.json"), reverse=True):
-            pj2 = load_json(pf, {})
-            dn = len([m for m in pj2.get("milestones", []) if m["status"] == "done"])
-            all_pj.append((pj2.get("status", ""), pj2.get("title", ""), dn, len(pj2.get("milestones", []))))
-    p.append("<section id='auto'><h2>자동화 내역</h2>"
-             "<p class='desc'>가리가 사람 없이 해낸 일들의 흔적 — 예약 실행, 파견 작업, 단계별 프로젝트.</p>"
-             "<div class='grid g3'>")
-    p.append("<div class='card'><div class='kpi-label'>최근 자동 실행 (예약·파견)</div><table>%s</table></div>" % (
-        "".join(row([e(c["ts"][5:16]), e(c["text"][:70])]) for c in autoruns)
-        or row(["<span class='dim'>아직 없음</span>", ""])))
-    p.append("<div class='card'><div class='kpi-label'>파견 보고서 원문 (~/gari/works)</div><table>%s</table></div>" % (
-        "".join(row([e(w.stem)]) for w in works) or row(["<span class='dim'>아직 없음</span>"])))
-    p.append("<div class='card'><div class='kpi-label'>프로젝트 전체 이력</div><table>%s</table></div>" % (
-        "".join(row([e(t[:30]), "%d/%d" % (dn, n),
-                     {"done": "<span class='ok'>완료</span>", "running": "진행",
-                      "awaiting_approval": "결재 대기", "escalated": "<span class='bad'>막힘</span>"}.get(s, s)])
-                for s, t, dn, n in all_pj[:8]) or row(["<span class='dim'>아직 없음</span>", "", ""])))
-    p.append("</div></section>")
-    recent_dec = [c for c in cards14 if c.get("type") == "decision"][-15:][::-1]
-    p.append("<section id='log'><h2>최근 결정 기록</h2>"
-             "<p class='desc'>대화에서 증류된 결정 카드 — 가리 기억의 뼈대입니다. 더 깊은 열람은 옆 채팅에 물어보세요.</p>"
-             "<div class='card' style='padding:6px 8px'><table>%s</table></div></section>" % (
-        "".join(row([e(c["ts"][5:16]), e(_proj_short(c)), e(c["text"][:100])]) for c in recent_dec)
-        or row(["<span class='dim'>최근 2주 결정 없음</span>", "", ""])))
-    p.append("<footer>이 페이지는 가리의 기억 원장에서 자동 생성됩니다 — 로그인도 외부 전송도 없고, "
-             "모든 데이터는 이 컴퓨터의 ~/gari/store 안에만 있습니다. 다시 열기: 터미널에서 <b>gari dash</b> · "
-             "<button class='ghost' onclick=\"act('/api/sweep','',this)\">지금 바로 정리(스윕) 실행</button></footer>")
-    p.append("""<div id='chat'><header><b>가리에게 말 걸기</b>
-<div class='sub'>펫과 같은 대화 — 기억·판단·파견(ㄱㄱ 승인)·예약 전부 됩니다</div></header>
-<div id='msgs'><div class='msg ga'>형님, 여기서도 저 부르시면 됩니다. 기억을 묻거나, 일을 시키거나, "매일 ~해줘"로 예약을 걸어보세요.</div></div>
-<div id='inbar'><input id='inp' placeholder='가리에게 물어보기…' autocomplete='off'><button id='send'>보내기</button></div></div>
+
+    _KIND_KR = {"ask": "대화 접수", "ask-deep": "깊은 판단", "ask-general": "일반·웹 답변",
+                "ask-docs": "문서 수색", "ask-attach": "이미지 보기", "distill": "대화→기억 증류",
+                "wiki": "위키 갱신", "triage": "미결 정리 판정", "triage-kinds": "미결 분류",
+                "verify": "완료 주장 실측 검수", "stakes": "오늘의 3가지 선별", "mentor": "멘토 리뷰",
+                "project-plan": "계획서 작성", "project-verify": "파견 검수",
+                "project-replan": "계획 재설계", "weekly-reflect": "주간 반성",
+                "nag-judge": "참견 품질 판정", "cron": "예약 실행", "do-api": "비상 뇌 파견"}
+
+    def row(cells, tag="td"):
+        return "<tr>" + "".join("<%s>%s</%s>" % (tag, c, tag) for c in cells) + "</tr>"
+
+    # ═══ 오늘 뷰 ═══
+    v_today = ["<h1>오늘</h1><p class='lead'>가리가 기억 전체에서 고른, 지금 형님에게 중요한 것부터.</p>"]
+    sk = (stakes.get("stakes") or [])[:3]
+    if stakes.get("brief"):
+        v_today.append("<div class='hint' style='margin-bottom:16px;font-size:13.5px;color:var(--fg)'>%s</div>"
+                       % e(stakes["brief"]))
+    for i, s in enumerate(sk):
+        btns = ""
+        if s.get("action") == "resolve" and s.get("id"):
+            btns = ("<div style='margin-top:9px;display:flex;gap:6px'>"
+                    "<button class='act pri' onclick=\"act('/api/resolve','%s',this)\">완료</button>"
+                    "<button class='act' onclick=\"act('/api/snooze','%s',this)\">나중에</button></div>"
+                    % (e(s["id"]), e(s["id"])))
+        v_today.append("<div class='stake'><div class='n'>%d</div><div style='flex:1'>"
+                       "<div class='gain'>%s</div><div class='lb'>%s</div>%s</div></div>"
+                       % (i + 1, e(s.get("gain", "")), e(s.get("label", "")), btns))
+    if not sk:
+        v_today.append("<div class='card empty'>다음 아침 보고(9시) 때 오늘의 3가지가 여기 올라옵니다.</div>")
+    v_today.append("<h2>아침 카드</h2><div class='grid g3'>")
+    v_today.append("<div class='card'><div class='kpi-l'>오늘의 한 칸</div><div style='font-size:13.5px'>%s</div></div>"
+                   % (e(today_step) or "<span class='dim'>아침에 산출</span>"))
+    v_today.append("<div class='card'><div class='kpi-l'>가리의 질문</div><div style='font-size:13.5px'>%s</div>"
+                   "<div style='margin-top:10px'><button class='act' onclick=\"prefill('아침 질문에 답할게: ')\">채팅으로 답하기</button></div></div>"
+                   % (e(today_q) or "<span class='dim'>없음</span>"))
+    v_today.append("<div class='card'><div class='kpi-l'>참견 · 훈련</div><div style='font-size:13px'>%s</div>"
+                   "<div class='kpi-s'>%s</div></div>" % (
+        e(today_nag) or "<span class='dim'>없음</span>", e(mentor_line)))
+    v_today.append("</div>")
+    if live_pj:
+        v_today.append("<h2>지금 돌아가는 큰일</h2>")
+        for pid, s, t, dn, n in live_pj:
+            actb = ("<button class='act pri' onclick=\"act('/api/approve','%s',this)\">승인</button>" % e(pid)) \
+                if s == "awaiting_approval" else ""
+            st_txt = {"running": "<span class='ok'>진행 중</span>", "awaiting_approval": "결재 대기",
+                      "escalated": "<span class='bad'>막힘 — 판단 필요</span>"}.get(s, s)
+            v_today.append("<div class='stake'><div style='flex:1'><div class='gain'>%s</div>"
+                           "<div class='lb'>%d/%d 단계 · %s</div></div>%s</div>"
+                           % (e(t), dn, n, st_txt, actb))
+
+    # ═══ 처리함 뷰 ═══
+    v_inbox = ["<h1>처리함</h1><p class='lead'>대화에서 건져 올린 '아직 안 닫힌 일' 전부. "
+               "완료면 닫고, 지금 결정할 수 없으면 나중에(7일 뒤 복귀)로 재워두세요.</p>",
+               "<div class='card' style='padding:4px 6px'><table><thead>"
+               + row(["프로젝트", "내용", ""], "th") + "</thead><tbody>"]
+    for c in pend_all[-40:][::-1]:
+        btns = ("<div style='display:flex;gap:6px;justify-content:flex-end'>"
+                "<button class='act' onclick=\"act('/api/resolve','%s',this)\">완료</button>"
+                "<button class='act' onclick=\"act('/api/snooze','%s',this)\">나중에</button></div>"
+                % (e(c.get("id", "")), e(c.get("id", "")))) if c.get("id") else ""
+        v_inbox.append(row(["<span class='badge'>%s</span>" % e(_proj_short(c)),
+                            e(c["text"][:130]), btns]))
+    if not pend_all:
+        v_inbox.append(row(["<div class='empty'>비어 있음 — 좋은 상태입니다</div>", "", ""]))
+    v_inbox.append("</tbody></table></div>")
+
+    # ═══ 자동화 뷰 ═══
+    v_auto = ["<h1>자동화</h1><p class='lead'>사람 없이 돌아가는 것들 — 예약, 파견, 단계별 프로젝트.</p>"]
+    v_auto.append("<h2>예약 (채팅에 \"매일 ~해줘\"라고 말하면 늘어납니다)</h2>"
+                  "<div class='card' style='padding:4px 6px'><table><thead>"
+                  + row(["주기", "할 일", "마지막 실행"], "th") + "</thead><tbody>")
+    for c in crons:
+        v_auto.append(row(["<span class='badge live'>%s</span>" % e(("매 %g시간" % c["every_h"])
+                                                                    if c.get("every_h") else "매일 " + c.get("daily_at", "")),
+                           e(c.get("prompt", "")[:70]),
+                           "<span class='num dim'>%s</span>" % e((c.get("last_run") or "아직")[:16])]))
+    if not crons:
+        v_auto.append(row(["<div class='empty'>아직 없음</div>", "", ""]))
+    v_auto.append("</tbody></table></div>")
+    v_auto.append("<h2>프로젝트 (계획→파견→실물 검수의 단계 실행)</h2>"
+                  "<div class='card' style='padding:4px 6px'><table><tbody>")
+    for pid, s, t, dn, n in projects[:10]:
+        v_auto.append(row([e(t[:50]), "<span class='num'>%d/%d</span>" % (dn, n),
+                           {"done": "<span class='ok'>완료</span>", "running": "<span class='accent'>진행</span>",
+                            "awaiting_approval": "결재 대기", "escalated": "<span class='bad'>막힘</span>"}.get(s, s)]))
+    if not projects:
+        v_auto.append(row(["<div class='empty'>큰일을 시키면 여기 단계별 진행이 뜹니다</div>", "", ""]))
+    v_auto.append("</tbody></table></div>")
+    v_auto.append("<h2>최근 자동 실행 흔적</h2><div class='card' style='padding:4px 6px'><table><tbody>")
+    for c in autoruns:
+        v_auto.append(row(["<span class='num dim'>%s</span>" % e(c["ts"][5:16]), e(c["text"][:90])]))
+    if not autoruns:
+        v_auto.append(row(["<div class='empty'>아직 없음</div>", ""]))
+    v_auto.append("</tbody></table></div>")
+    v_auto.append("<h2>파견 보고서 원문</h2><div class='hint'>%s — 파일은 ~/gari/works, 내용은 채팅에 \"아까 그 파견 어떻게 됐어\"로 물어봐도 됩니다.</div>"
+                  % (", ".join(e(w.stem) for w in works[:6]) or "아직 없음"))
+
+    # ═══ 실황 뷰 ═══
+    v_live = ["<h1>실황</h1><p class='lead'>가리의 몸이 실제로 움직이는 모습 — 뇌 호출, 프로젝트 폴더 실측, 학습 계기판.</p>"]
+    v_live.append("<div class='grid g3'>")
+    v_live.append("<div class='card'><div class='kpi-l'>오늘 쓴 비용</div><div class='kpi num'>$%.2f</div>"
+                  "<div class='kpi-s'>이번 달 $%.2f — 빌린 뇌 값 전부</div></div>" % (cost_today, cost_month))
+    v_live.append("<div class='card'><div class='kpi-l'>참견 정확도 (2주)</div><div class='kpi num'>%s</div>"
+                  "<div class='kpi-s'>채점 %d건 중 맞음 %d · 자가 검열로 삼킨 헛짚음 %d</div></div>" % (
+        ("%d%%" % round(100.0 * g_hit / len(grades))) if grades else "–",
+        len(grades), g_hit, len([j for j in njudge if j.get("verdict") == "miss"])))
+    v_live.append("<div class='card'><div class='kpi-l'>못 찾은 질문 (2주)</div><div class='kpi num'>%d</div>"
+                  "<div class='kpi-s'>기억력 개선 재료 — 주간 반성이 소화합니다</div></div>" % len(misses))
+    v_live.append("</div>")
+    v_live.append("<h2>최근 뇌 호출 — 한 줄이 한 번의 생각, 비용이 그 생각의 값</h2>"
+                  "<div class='card' style='padding:4px 6px'><table><thead>"
+                  + row(["시각", "무슨 생각", "빌린 뇌", "시간", "비용", ""], "th") + "</thead><tbody>")
+    for c in recent_calls:
+        v_live.append(row(["<span class='num dim'>%s</span>" % e(str(c.get("ts", ""))[11:19]),
+                           e(_KIND_KR.get(str(c.get("kind", "")), str(c.get("kind", "?")))),
+                           "<span class='badge'>%s</span>" % e(str(c.get("model", "?"))),
+                           "<span class='num'>%.0f초</span>" % (c.get("sec") or 0),
+                           "<span class='num'>%s</span>" % ("$%.3f" % c["cost_usd"] if c.get("cost_usd") else "–"),
+                           "<span class='ok'>✓</span>" if c.get("ok") else "<span class='bad'>✗</span>"]))
+    v_live.append("</tbody></table></div>")
+    v_live.append("<h2>프로젝트 폴더 실측 (git) — 대화에 안 나온 작업도 이게 사실</h2>"
+                  "<div class='card' style='padding:4px 6px'><table><thead>"
+                  + row(["프로젝트", "마지막 커밋", "24시간", "미커밋"], "th") + "</thead><tbody>")
+    for name, pj in sorted(pulse.items(), key=lambda kv: kv[1]["last_commit"], reverse=True)[:9]:
+        v_live.append(row([e(name), "<span class='num dim'>%s</span>" % e(pj["last_commit"][5:16]),
+                           ("<span class='accent num'>%d건</span>" % pj["commits_24h"]) if pj["commits_24h"] else "<span class='dim'>–</span>",
+                           ("<span class='num'>%d개</span>" % pj["dirty"]) if pj["dirty"] else "<span class='dim'>–</span>"]))
+    v_live.append("</tbody></table></div>")
+
+    # ═══ 기록 뷰 ═══
+    v_log = ["<h1>기록</h1><p class='lead'>대화에서 증류된 결정 카드 — 가리 기억의 뼈대. 더 깊은 열람은 채팅에.</p>",
+             "<div class='card' style='padding:4px 6px'><table><tbody>"]
+    for c in recent_dec:
+        v_log.append(row(["<span class='num dim'>%s</span>" % e(c["ts"][5:16]),
+                          "<span class='badge'>%s</span>" % e(_proj_short(c)), e(c["text"][:110])]))
+    if not recent_dec:
+        v_log.append(row(["<div class='empty'>최근 2주 결정 없음</div>", "", ""]))
+    v_log.append("</tbody></table></div>")
+
+    # ═══ 소개 뷰 (과한 친절) ═══
+    v_intro = ["<h1>가리는 무엇인가</h1>",
+               "<p class='lead'>가리는 아이루의 개인 AI 비서입니다. 모든 AI 도구와 나눈 대화를 스스로 모아 기억하고, "
+               "아침마다 중요한 것 3가지를 골라 보고하며, 시킨 일은 다른 AI에게 맡긴 뒤 결과를 직접 검사합니다.</p>",
+               "<h2>다섯 단계 — 10분마다 자동으로</h2><div class='flow'>"]
+    for sn, b, t in [("01 듣기", "모든 대화·코드 수집", "Claude·Codex 등과 나눈 대화, 프로젝트 폴더의 git 변화까지 스스로 수집합니다."),
+                     ("02 기억", "결정만 증류", "잡담은 버리고 결정·미결·교정만 카드로. 프로젝트마다 현재 상태 문서를 갱신합니다."),
+                     ("03 보고", "아침 9시, 3가지", "기억 전체를 뒤져 '오늘 중요한 것 3가지'를 이유와 함께 올립니다."),
+                     ("04 실행", "맡기고 검사", "시킨 일은 실무 AI에 파견하고, 결과물을 직접 열어 검사합니다. 불통과면 재시도 또는 사람 호출."),
+                     ("05 학습", "매주 자기 반성", "지적·헛짚은 참견·못 찾은 질문을 복기해 다음 주의 행동 규칙을 스스로 제안합니다.")]:
+        v_intro.append("<div class='step'><div class='sn'>%s</div><b>%s</b><span>%s</span></div>" % (sn, b, t))
+    v_intro.append("</div><h2>믿어도 되는 이유 — 가리의 불변 조항</h2><div class='grid g2'>")
+    for b, t in [("검증 없는 완료 없음", "파견 결과는 보고서가 아니라 실제 파일을 열어 확인해야 '완료'가 됩니다."),
+                 ("기억은 지우지 않음", "기록은 쌓기만 하고, 틀린 건 정정 카드로 덮습니다 — 이력이 남습니다."),
+                 ("승인 없이 비가역 없음", "머지·예약·큰 실행은 형님의 ㄱㄱ 없이는 일어나지 않습니다."),
+                 ("전부 이 컴퓨터 안", "서버도 외부 전송도 없습니다. 모든 데이터는 ~/gari/store 폴더 하나입니다.")]:
+        v_intro.append("<div class='card'><b style='font-size:14px'>%s</b>"
+                       "<div class='kpi-s' style='margin-top:6px'>%s</div></div>" % (b, t))
+    v_intro.append("</div><h2>빌려 쓰는 뇌 (지금 배역)</h2>"
+                   "<div class='card' style='padding:4px 6px'><table><tbody>%s%s%s%s</tbody></table></div>"
+                   "<div class='hint' style='margin-top:10px'>모델은 부품입니다 — 하나가 사라져도 %s 순서로 대체돼 가리는 계속 삽니다.</div>" % (
+        row(["빠른 응대·기억", "<span class='badge'>%s</span>" % e(cfg["ask_model"])]),
+        row(["문서·일반 지식", "<span class='badge'>%s</span>" % e(cfg["ask_fallback_model"])]),
+        row(["깊은 판단", "<span class='badge live'>%s</span>" % e(cfg["deep_model"])]),
+        row(["기억 만들기", "<span class='badge'>%s</span>" % e(cfg["distill_model"])]),
+        e(" → ".join(cfg.get("brain_chain", ["claude"])))))
+
+    # ═══ 셸 조립 ═══
+    views = [("today", "오늘", len(sk) or ""), ("inbox", "처리함", len(pend_all)),
+             ("auto", "자동화", len(crons) + len(live_pj) or ""), ("live", "실황", ""),
+             ("log", "기록", ""), ("intro", "소개", "")]
+    nav = "".join("<button data-v='%s'><span class='t'>%s</span>%s</button>" % (
+        v, label, ("<span class='cnt'>%s</span>" % cnt) if cnt != "" else "")
+        for v, label, cnt in views)
+    shell = ("<style>%s</style>" % _DASH_CSS
+             + "<aside><div class='brand'><div class='fish'>가</div><div><b>가리</b>"
+             "<div class='st'><span class='pulse%s'></span>%s · 폰 %s</div></div></div>"
+             "<nav>%s</nav>"
+             "<div class='foot'>오늘 $%.2f · 이달 $%.2f<br>%s 갱신 · 10분마다 자동<br>"
+             "터미널: <b>gari dash</b></div></aside>" % (
+        "" if healthy else " bad", "정상" if healthy else "점검 필요",
+        "연결" if gw_on else "꺼짐", nav, cost_today, cost_month, e(now[11:16]))
+             + "<main>"
+             + "<div class='view' id='v-today'>%s</div>" % "".join(v_today)
+             + "<div class='view' id='v-inbox'>%s</div>" % "".join(v_inbox)
+             + "<div class='view' id='v-auto'>%s</div>" % "".join(v_auto)
+             + "<div class='view' id='v-live'>%s</div>" % "".join(v_live)
+             + "<div class='view' id='v-log'>%s</div>" % "".join(v_log)
+             + "<div class='view' id='v-intro'>%s</div>" % "".join(v_intro)
+             + "</main>"
+             + """<div id='chat'><div class='hd'><b>가리에게 말 걸기</b>
+<div class='sub'>기억·판단·파견(ㄱㄱ)·예약 — 펫과 같은 뇌입니다</div></div>
+<div id='msgs'><div class='msg ga'>형님, 여기서도 저 부르시면 됩니다. 무엇이든 물어보시고, "매일 ~해줘"로 예약도 걸어보세요.</div></div>
+<div id='inbar'><input id='inp' placeholder='가리에게 물어보기…  (⌘K)' autocomplete='off'><button id='send'>보내기</button></div></div>
 <script>
 const msgs=document.getElementById('msgs'),inp=document.getElementById('inp'),btn=document.getElementById('send');
 let first=true;
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+document.querySelectorAll('nav button').forEach(x=>x.classList.remove('on'));
+document.querySelectorAll('.view').forEach(x=>x.classList.remove('on'));
+b.classList.add('on');document.getElementById('v-'+b.dataset.v).classList.add('on');
+localStorage.gariView=b.dataset.v});
+const lv=localStorage.gariView||'today';
+(document.querySelector("nav button[data-v='"+lv+"']")||document.querySelector('nav button')).click();
+function prefill(t){inp.value=t;inp.focus()}
 function add(cls,text){const d=document.createElement('div');d.className='msg '+cls;d.textContent=text;
 msgs.appendChild(d);msgs.scrollTop=msgs.scrollHeight;return d}
 async function send(){const q=inp.value.trim();if(!q||btn.disabled)return;inp.value='';add('me',q);
 const t=add('ga think','생각하는 중…');btn.disabled=true;
+let secs=0;const tick=setInterval(()=>{secs++;t.textContent='생각하는 중… '+secs+'초'+(secs>60?' (깊은 판단은 2~3분 걸립니다)':'')},1000);
 try{const r=await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},
 body:JSON.stringify({q,new:first})});const j=await r.json();first=false;
 t.classList.remove('think');t.textContent=j.answer||j.err||'(응답 없음)';}
 catch(e){t.textContent='연결 실패 — 터미널에서 gari dash 로 다시 열어주세요';}
-btn.disabled=false;msgs.scrollTop=msgs.scrollHeight;inp.focus()}
+clearInterval(tick);btn.disabled=false;msgs.scrollTop=msgs.scrollHeight;inp.focus()}
 btn.onclick=send;inp.addEventListener('keydown',e=>{if(e.key==='Enter')send()});
+document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='k'){e.preventDefault();inp.focus()}});
 async function act(path,id,el){el.disabled=true;const old=el.textContent;el.textContent='…';
 try{const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},
 body:JSON.stringify(path==='/api/merge'?{name:id}:{id})});const j=await r.json();
-el.textContent='✓';add('ga',(j.out||j.answer||'').slice(0,300)||'처리했습니다.');setTimeout(()=>location.reload(),1800)}
+const box=el.closest('tr')||el.closest('.stake');
+if(box){box.style.transition='opacity .3s';box.style.opacity='.25'}
+el.textContent='✓';add('ga',(j.out||'처리했습니다.').slice(0,200))}
 catch(e){el.textContent=old;el.disabled=false;add('ga','실패 — 서버 연결을 확인해주세요')}}
 </script>""")
-    DASH_PATH.write_text("<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-                         "<title>가리 관제실</title>" + "".join(p), encoding="utf-8")
+    DASH_PATH.write_text("<!doctype html><meta charset='utf-8'>"
+                         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+                         "<title>가리 관제실</title>" + shell, encoding="utf-8")
 
 
 def cmd_serve(args):
     """gari serve — 관제실 웹 서버 (127.0.0.1 전용, 표준 라이브러리, 의존성 0).
-    대시가 '보는 창'에서 '조작하는 콘솔'로: 채팅(전체 라우팅), 처리함 버튼, 결재, 합류, 즉시 정리.
-    보안: 루프백 바인드만 — 외부에서 접근 불가. 인증 없음은 1인 로컬 전제."""
+    보안: 루프백 바인드만 — 외부 접근 불가. 인증 없음은 1인 로컬 전제."""
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     cfg = load_config()
     port = int(cfg.get("serve_port", 7838))
@@ -1920,7 +1981,7 @@ def cmd_serve(args):
                 return self._json({"err": "시간 초과 — 백그라운드에서 계속될 수 있습니다"}, 504)
 
     srv = ThreadingHTTPServer(("127.0.0.1", port), H)
-    print("가리 관제실: http://127.0.0.1:%d (Ctrl+C로 종료)" % port)
+    print("가리 관제실: http://127.0.0.1:%d" % port)
     srv.serve_forever()
     return 0
 
