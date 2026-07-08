@@ -277,14 +277,17 @@ def _claude_text(content):
     return ""
 
 
-def extract_turns_claude(path, offset):
+def extract_turns_claude(path, offset, max_bytes=None):
     """Claude 세션 JSONL에서 (offset 이후) 턴 추출.
     반환: (turns, new_offset, meta, skipped_lines)"""
     turns, skipped = [], 0
     meta = {}
     with open(path, encoding="utf-8") as f:
         f.seek(offset)
+        _cap = offset + max_bytes if max_bytes else None
         for line in f:
+            if _cap and f.tell() > _cap:
+                break   # 조각 상한 — 다음 스윕이 이어서 (거대 백로그 교착 방지)
             try:
                 d = json.loads(line)
             except json.JSONDecodeError:
@@ -327,13 +330,16 @@ def _strip_codex_wrappers(text):
     return "" if tail.startswith(CODEX_WRAPPER_STARTS) else tail
 
 
-def extract_turns_codex(path, offset):
+def extract_turns_codex(path, offset, max_bytes=None):
     """Codex rollout JSONL에서 턴 추출."""
     turns, skipped = [], 0
     meta = {}
     with open(path, encoding="utf-8") as f:
         f.seek(offset)
+        _cap = offset + max_bytes if max_bytes else None
         for line in f:
+            if _cap and f.tell() > _cap:
+                break   # 조각 상한 — 다음 스윕이 이어서 (거대 백로그 교착 방지)
             try:
                 d = json.loads(line)
             except json.JSONDecodeError:
@@ -363,13 +369,16 @@ def extract_turns_codex(path, offset):
     return turns, new_offset, meta, skipped
 
 
-def extract_turns_gjc(path, offset):
+def extract_turns_gjc(path, offset, max_bytes=None):
     """gjc 세션 JSONL — Claude와 같은 콘텐츠 블록 구조라 _claude_text 재사용."""
     turns, skipped = [], 0
     meta = {}
     with open(path, encoding="utf-8") as f:
         f.seek(offset)
+        _cap = offset + max_bytes if max_bytes else None
         for line in f:
+            if _cap and f.tell() > _cap:
+                break   # 조각 상한 — 다음 스윕이 이어서 (거대 백로그 교착 방지)
             try:
                 d = json.loads(line)
             except json.JSONDecodeError:
@@ -606,7 +615,8 @@ def _sweep_inner(args, cfg):
         # 2) 허용 프로젝트만 본문 추출
         _fn = SOURCES[tool][1]
         try:
-            turns, new_offset, extracted_meta, skipped = _fn(path, cur["offset"])
+            turns, new_offset, extracted_meta, skipped = _fn(
+                path, cur["offset"], max_bytes=cfg.get("sweep_chunk_bytes", 500_000))
         except Exception as e:
             errors.append("%s 파싱 실패: %s" % (path.name, e))
             n = health_incr("parse_failures_%s" % tool)
@@ -619,7 +629,9 @@ def _sweep_inner(args, cfg):
         meta = dict(extracted_meta, **{k: v for k, v in meta.items() if v})
         project = meta.get("cwd")
         # 자기 증류 대화 재수집 방지
-        if any(DISTILL_MARKER in t[1] or "[GARI-DO]" in t[1] for t in turns[:2]):
+        # 자기 증류 판정은 '사용자 턴'만 본다 — 어시스턴트 턴의 코드 인용(마커 문자열)에 속지 않게
+        if any(t[0] == "user" and (DISTILL_MARKER in t[1] or "[GARI-DO]" in t[1])
+               for t in turns[:4]):
             cursors[key] = {"offset": new_offset, "meta": meta}
             continue
         if not in_allowlist(project, cfg):  # peek이 못 찾았던 드문 경우의 재판정
