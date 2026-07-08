@@ -1599,9 +1599,33 @@ background:var(--bg);color:var(--fg);outline:none;transition:border .12s}
 #send{border:0;background:var(--accent);color:#fff;border-radius:9px;padding:0 16px;
 font-size:13px;font-weight:700;cursor:pointer}
 #send:disabled{opacity:.5}
-@media(max-width:1100px){body{grid-template-columns:64px 1fr 340px}
-.brand b,.brand .st,nav button span.t,aside .foot{display:none}
-nav button{justify-content:center}}
+#chat-toggle{display:none;position:fixed;right:18px;bottom:18px;z-index:60;width:52px;height:52px;
+border-radius:50%;border:0;background:var(--accent);color:#fff;font-size:20px;font-weight:800;
+cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.18)}
+/* 중간: 사이드바 아이콘 레일 + 채팅은 드로어 */
+@media(max-width:1180px){body{grid-template-columns:64px 1fr 0}
+.brand b,.brand .st,nav button span.t,nav .cnt,aside .foot{display:none}
+nav button{justify-content:center;font-size:15px}
+#chat{position:fixed;right:0;top:0;width:min(400px,92vw);height:100dvh;z-index:50;
+transform:translateX(105%);transition:transform .22s ease;box-shadow:-8px 0 32px rgba(0,0,0,.12)}
+#chat.open{transform:none}
+#chat-toggle{display:flex;align-items:center;justify-content:center}}
+/* 좁음(폰·세로 분할): 단일 컬럼 + 하단 탭바 */
+@media(max-width:760px){body{display:block;height:auto;overflow:auto;min-height:100dvh}
+aside{position:fixed;bottom:0;left:0;right:0;top:auto;z-index:40;flex-direction:row;
+border-right:0;border-top:1px solid var(--border);padding:6px 8px;gap:0;
+justify-content:space-around;background:var(--panel)}
+.brand{display:none}
+nav{display:flex;flex:1;justify-content:space-around}
+nav button{flex-direction:column;gap:2px;font-size:10.5px;padding:6px 4px}
+nav button span.t{display:block}
+main{padding:20px 16px 96px}
+.grid.g2,.grid.g3{grid-template-columns:1fr}
+.flow{grid-template-columns:1fr}
+.card{overflow-x:auto}
+h1{font-size:20px}
+#chat{width:100vw}
+#chat-toggle{bottom:74px}}
 """
 
 
@@ -1865,6 +1889,7 @@ def build_dash(cfg):
 <div class='sub'>기억·판단·파견(ㄱㄱ)·예약 — 펫과 같은 뇌입니다</div></div>
 <div id='msgs'><div class='msg ga'>형님, 여기서도 저 부르시면 됩니다. 무엇이든 물어보시고, "매일 ~해줘"로 예약도 걸어보세요.</div></div>
 <div id='inbar'><input id='inp' placeholder='가리에게 물어보기…  (⌘K)' autocomplete='off'><button id='send'>보내기</button></div></div>
+<button id='chat-toggle' aria-label='가리와 대화'>가</button>
 <script>
 const msgs=document.getElementById('msgs'),inp=document.getElementById('inp'),btn=document.getElementById('send');
 let first=true;
@@ -1887,7 +1912,11 @@ t.classList.remove('think');t.textContent=j.answer||j.err||'(응답 없음)';}
 catch(e){t.textContent='연결 실패 — 터미널에서 gari dash 로 다시 열어주세요';}
 clearInterval(tick);btn.disabled=false;msgs.scrollTop=msgs.scrollHeight;inp.focus()}
 btn.onclick=send;inp.addEventListener('keydown',e=>{if(e.key==='Enter')send()});
-document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='k'){e.preventDefault();inp.focus()}});
+const chatEl=document.getElementById('chat'),ct=document.getElementById('chat-toggle');
+ct.onclick=()=>{chatEl.classList.toggle('open');if(chatEl.classList.contains('open'))inp.focus()};
+document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='k'){e.preventDefault();
+chatEl.classList.add('open');inp.focus()}
+if(e.key==='Escape')chatEl.classList.remove('open')});
 async function act(path,id,el){el.disabled=true;const old=el.textContent;el.textContent='…';
 try{const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},
 body:JSON.stringify(path==='/api/merge'?{name:id}:{id})});const j=await r.json();
