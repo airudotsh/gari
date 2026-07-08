@@ -1536,6 +1536,26 @@ align-items:center;justify-content:center;font-size:12px;font-weight:700;margin-
 .hint{background:var(--muted);border-radius:var(--radius);padding:12px 16px;font-size:13px;
 color:var(--muted-fg);margin-top:12px}
 footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--border);color:var(--muted-fg);font-size:12.5px}
+body{padding-right:404px}
+#chat{position:fixed;top:0;right:0;width:380px;height:100vh;border-left:1px solid var(--border);
+background:var(--card);display:flex;flex-direction:column}
+#chat header{padding:16px 18px;border-bottom:1px solid var(--border)}
+#chat header b{font-size:15px}#chat header .sub{font-size:12px;color:var(--muted-fg)}
+#msgs{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
+.msg{max-width:86%;padding:9px 13px;border-radius:14px;font-size:13.5px;line-height:1.55;white-space:pre-wrap;word-break:break-word}
+.me{align-self:flex-end;background:var(--fg);color:var(--bg);border-bottom-right-radius:4px}
+.ga{align-self:flex-start;background:var(--muted);border-bottom-left-radius:4px}
+.ga.think{color:var(--muted-fg);font-style:italic}
+#inbar{display:flex;gap:8px;padding:12px;border-top:1px solid var(--border)}
+#inp{flex:1;border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:14px;
+background:var(--bg);color:var(--fg);outline:none}#inp:focus{border-color:var(--muted-fg)}
+button{border:1px solid var(--border);background:var(--fg);color:var(--bg);border-radius:8px;
+padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer}
+button.ghost{background:transparent;color:var(--fg);font-weight:500;padding:4px 10px;font-size:12px}
+button:disabled{opacity:.5;cursor:default}
+.actrow{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+@media(max-width:900px){body{padding-right:24px}#chat{position:static;width:auto;height:480px;
+border:1px solid var(--border);border-radius:var(--radius);margin-top:32px}}
 """
 
 
@@ -1564,7 +1584,8 @@ def build_dash(cfg):
             pj = load_json(pf, {})
             if pj.get("status") in ("running", "awaiting_approval", "escalated"):
                 done_n = len([m for m in pj.get("milestones", []) if m["status"] == "done"])
-                projects.append((pj.get("status"), pj.get("title", ""), done_n, len(pj.get("milestones", []))))
+                projects.append((pj.get("status"), pj.get("title", ""), done_n,
+                                 len(pj.get("milestones", [])), pj.get("id", "")))
     stakes = load_json(STORE / "stakes.json", {})
     crons = []
     if CRONS_PATH.exists():
@@ -1664,8 +1685,16 @@ def build_dash(cfg):
         row(["깊은 판단", "<span class='accent'>%s</span>" % e(cfg["deep_model"])]),
         row(["기억 만들기", e(cfg["distill_model"])]),
         e(" → ".join(cfg.get("brain_chain", ["claude"])))))
-    st_rows = "".join(row(["<b>%s</b>" % "①②③"[i], e(s.get("gain", ""))])
-                      for i, s in enumerate((stakes.get("stakes") or [])[:3]))         or row(["<span class='dim'>다음 아침 보고 때 산출됩니다</span>", ""])
+    def st_cell(s):
+        cell = e(s.get("gain", ""))
+        if s.get("action") == "resolve" and s.get("id"):
+            cell += ("<div class='actrow'><button class='ghost' onclick=\"act('/api/resolve','%s',this)\">완료</button>"
+                     "<button class='ghost' onclick=\"act('/api/snooze','%s',this)\">나중에</button></div>"
+                     % (e(s["id"]), e(s["id"])))
+        return cell
+    st_rows = "".join(row(["<b>%s</b>" % "①②③"[i], st_cell(s)])
+                      for i, s in enumerate((stakes.get("stakes") or [])[:3])) \
+        or row(["<span class='dim'>다음 아침 보고 때 산출됩니다</span>", ""])
     p.append("<div class='card'><h2>오늘의 3가지</h2><p class='desc'>가리가 기억 전체에서 고른, "
              "지금 주인에게 가장 중요한 일 — '하면 뭐가 달라지는가'로 말합니다.</p><table>%s</table></div>" % st_rows)
     cr_rows = "".join(row([e(("매 %g시간" % c["every_h"]) if c.get("every_h") else "매일 " + c.get("daily_at", "")),
@@ -1676,8 +1705,9 @@ def build_dash(cfg):
     # ── 파견 + 펄스 ──
     pj_rows = "".join(row([e(t), "%d/%d 단계" % (d, n),
                            {"running": "<span class='ok'>진행 중</span>",
-                            "awaiting_approval": "결재 대기", "escalated": "<span class='bad'>막힘 — 판단 필요</span>"}.get(s, s)])
-                      for s, t, d, n in projects)         or row(["<span class='dim'>지금은 없음</span>", "", "<span class='dim'>큰일을 시키면 여기 단계별 진행이 뜹니다</span>"])
+                            "awaiting_approval": "결재 대기 <button class='ghost' onclick=\"act('/api/approve','%s',this)\">승인</button>" % e(pid),
+                            "escalated": "<span class='bad'>막힘 — 판단 필요</span>"}.get(s, s)])
+                      for s, t, d, n, pid in projects)         or row(["<span class='dim'>지금은 없음</span>", "", "<span class='dim'>큰일을 시키면 여기 단계별 진행이 뜹니다</span>"])
     p.append("<section><div class='grid g3'>")
     p.append("<div class='card' style='grid-column:span 1'><h2>맡겨둔 큰일</h2>"
              "<p class='desc'>가리가 계획을 쪼개 실무 AI에게 나눠주고, 단계마다 결과를 검사하며 끌고 가는 프로젝트.</p>"
@@ -1703,19 +1733,128 @@ def build_dash(cfg):
     p.append("<div class='card'><div class='kpi-label'>주간 반성</div><div class='kpi'>월요일</div>"
              "<div class='kpi-sub'>한 주의 교정·실수를 복기해 '다음 주의 나를 바꿀 규칙'을 스스로 제안합니다</div></div>")
     p.append("</div></section>")
-    p.append("<footer>이 페이지는 가리의 기억 원장에서 자동 생성됩니다 — 서버도, 로그인도, 외부 전송도 없습니다. "
-             "모든 데이터는 이 컴퓨터의 ~/gari/store 안에만 있습니다. 다시 열기: 터미널에서 <b>gari dash</b></footer>")
+    p.append("<footer>이 페이지는 가리의 기억 원장에서 자동 생성됩니다 — 로그인도 외부 전송도 없고, "
+             "모든 데이터는 이 컴퓨터의 ~/gari/store 안에만 있습니다. 다시 열기: 터미널에서 <b>gari dash</b> · "
+             "<button class='ghost' onclick=\"act('/api/sweep','',this)\">지금 바로 정리(스윕) 실행</button></footer>")
+    p.append("""<div id='chat'><header><b>가리에게 말 걸기</b>
+<div class='sub'>펫과 같은 대화 — 기억·판단·파견(ㄱㄱ 승인)·예약 전부 됩니다</div></header>
+<div id='msgs'><div class='msg ga'>형님, 여기서도 저 부르시면 됩니다. 기억을 묻거나, 일을 시키거나, "매일 ~해줘"로 예약을 걸어보세요.</div></div>
+<div id='inbar'><input id='inp' placeholder='가리에게 물어보기…' autocomplete='off'><button id='send'>보내기</button></div></div>
+<script>
+const msgs=document.getElementById('msgs'),inp=document.getElementById('inp'),btn=document.getElementById('send');
+let first=true;
+function add(cls,text){const d=document.createElement('div');d.className='msg '+cls;d.textContent=text;
+msgs.appendChild(d);msgs.scrollTop=msgs.scrollHeight;return d}
+async function send(){const q=inp.value.trim();if(!q||btn.disabled)return;inp.value='';add('me',q);
+const t=add('ga think','생각하는 중…');btn.disabled=true;
+try{const r=await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},
+body:JSON.stringify({q,new:first})});const j=await r.json();first=false;
+t.classList.remove('think');t.textContent=j.answer||j.err||'(응답 없음)';}
+catch(e){t.textContent='연결 실패 — 터미널에서 gari dash 로 다시 열어주세요';}
+btn.disabled=false;msgs.scrollTop=msgs.scrollHeight;inp.focus()}
+btn.onclick=send;inp.addEventListener('keydown',e=>{if(e.key==='Enter')send()});
+async function act(path,id,el){el.disabled=true;const old=el.textContent;el.textContent='…';
+try{const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},
+body:JSON.stringify(path==='/api/merge'?{name:id}:{id})});const j=await r.json();
+el.textContent='✓';add('ga',(j.out||j.answer||'').slice(0,300)||'처리했습니다.');setTimeout(()=>location.reload(),1800)}
+catch(e){el.textContent=old;el.disabled=false;add('ga','실패 — 서버 연결을 확인해주세요')}}
+</script>""")
     DASH_PATH.write_text("<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
                          "<title>가리 관제실</title>" + "".join(p), encoding="utf-8")
 
 
+def cmd_serve(args):
+    """gari serve — 관제실 웹 서버 (127.0.0.1 전용, 표준 라이브러리, 의존성 0).
+    대시가 '보는 창'에서 '조작하는 콘솔'로: 채팅(전체 라우팅), 처리함 버튼, 결재, 합류, 즉시 정리.
+    보안: 루프백 바인드만 — 외부에서 접근 불가. 인증 없음은 1인 로컬 전제."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    cfg = load_config()
+    port = int(cfg.get("serve_port", 7838))
+
+    def _cli(*a, timeout=900):
+        r = subprocess.run([str(GARI_HOME / "bin" / "gari")] + list(a),
+                           capture_output=True, text=True, timeout=timeout, env=CLAUDE_ENV)
+        return (r.stdout or "").strip() or (r.stderr or "").strip()
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def _json(self, obj, code=200):
+            body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            if self.path in ("/", "/index.html"):
+                try:
+                    build_dash(load_config())
+                except Exception:
+                    pass
+                body = DASH_PATH.read_text(encoding="utf-8").encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            elif self.path == "/api/hud":
+                self._json(hud_data(load_config()))
+            else:
+                self._json({"err": "not found"}, 404)
+
+        def do_POST(self):
+            ln = int(self.headers.get("Content-Length", 0) or 0)
+            try:
+                req = json.loads(self.rfile.read(ln) or b"{}")
+            except json.JSONDecodeError:
+                return self._json({"err": "bad json"}, 400)
+            act = self.path
+            try:
+                if act == "/api/ask":
+                    q = (req.get("q") or "").strip()
+                    if not q:
+                        return self._json({"err": "빈 질문"}, 400)
+                    args = ["ask"] + (["--new"] if req.get("new") else []) + [q]
+                    return self._json({"answer": _cli(*args)})
+                if act == "/api/resolve":
+                    return self._json({"out": _cli("resolve", req.get("id", ""), timeout=60)})
+                if act == "/api/snooze":
+                    return self._json({"out": _cli("snooze", req.get("id", ""), timeout=60)})
+                if act == "/api/approve":
+                    return self._json({"out": _cli("project", "approve", req.get("id", ""), timeout=300)})
+                if act == "/api/merge":
+                    return self._json({"out": _cli("merge", req.get("name", ""), timeout=120)})
+                if act == "/api/sweep":
+                    return self._json({"out": _cli("sweep", "--force", timeout=900)[-400:]})
+                if act == "/api/grade":
+                    return self._json({"out": _cli("grade", req.get("id", ""), req.get("verdict", "right"), timeout=30)})
+                return self._json({"err": "unknown action"}, 404)
+            except subprocess.TimeoutExpired:
+                return self._json({"err": "시간 초과 — 백그라운드에서 계속될 수 있습니다"}, 504)
+
+    srv = ThreadingHTTPServer(("127.0.0.1", port), H)
+    print("가리 관제실: http://127.0.0.1:%d (Ctrl+C로 종료)" % port)
+    srv.serve_forever()
+    return 0
+
+
 def cmd_dash(args):
-    """gari dash — 관제 페이지 재생성 + 열기."""
+    """gari dash — 관제실 열기 (서버가 없으면 백그라운드로 띄운 뒤)."""
     cfg = load_config()
     build_dash(cfg)
-    print("관제 페이지: %s" % DASH_PATH)
+    port = int(cfg.get("serve_port", 7838))
+    alive = subprocess.run(["pgrep", "-f", "gari serve"], capture_output=True).returncode == 0
+    if not alive:
+        subprocess.Popen([str(GARI_HOME / "bin" / "gari"), "serve"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+        time.sleep(1)
+    print("관제실: http://127.0.0.1:%d" % port)
     if "--no-open" not in args:
-        subprocess.run(["open", str(DASH_PATH)])
+        subprocess.run(["open", "http://127.0.0.1:%d" % port])
     return 0
 
 
@@ -4283,7 +4422,7 @@ def main():
         "sweep": cmd_sweep, "report": cmd_report, "brief": cmd_brief,
         "status": cmd_status, "enqueue": cmd_enqueue, "done": cmd_done,
         "resolve": cmd_resolve, "log": cmd_log,
-        "ask": cmd_ask, "do": cmd_do, "pet": cmd_pet, "hud": cmd_hud, "weekly": cmd_weekly, "grade": cmd_grade, "chat": cmd_chat, "cost": cmd_cost, "doctor": cmd_doctor, "init": cmd_init, "wiki": cmd_wiki, "triage": cmd_triage, "snooze": cmd_snooze, "backfill": cmd_backfill, "project": cmd_project, "pulse": cmd_pulse, "merge": cmd_merge, "skill": cmd_skill, "cron": cmd_cron, "event": cmd_event, "gateway": cmd_gateway, "dash": cmd_dash,
+        "ask": cmd_ask, "do": cmd_do, "pet": cmd_pet, "hud": cmd_hud, "weekly": cmd_weekly, "grade": cmd_grade, "chat": cmd_chat, "cost": cmd_cost, "doctor": cmd_doctor, "init": cmd_init, "wiki": cmd_wiki, "triage": cmd_triage, "snooze": cmd_snooze, "backfill": cmd_backfill, "project": cmd_project, "pulse": cmd_pulse, "merge": cmd_merge, "skill": cmd_skill, "cron": cmd_cron, "event": cmd_event, "gateway": cmd_gateway, "dash": cmd_dash, "serve": cmd_serve,
     }
     args = sys.argv[1:]
     if not args or args[0] not in cmds:
