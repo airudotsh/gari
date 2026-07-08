@@ -3007,7 +3007,11 @@ def cmd_ask(args):
         a2, rc2 = run_claude_stream(deep, cfg["ask_model"], cfg, "ask-docs",
                                     "Read,Glob,Grep,WebSearch,WebFetch", timeout=cfg["do_timeout_sec"],
                                     cwd=str(Path.home()))
-        if a2 and re.search(r"\[\s*일반\s*질문\s*\]", a2):
+        if a2 and re.search(r"\[\s*깊은\s*사고\s*\]", a2):
+            a2 = re.sub(r"\[\s*깊은\s*사고\s*\]", "", a2).strip()
+            if len(a2) < 20:
+                a2 = ""   # 알맹이 없으면 아래 일반 차선이 받는다
+        if not a2 or (a2 and re.search(r"\[\s*일반\s*질문\s*\]", a2)):
             # 수색꾼의 재라우팅 요청 — 마커를 노출하지 말고 일반(웹) 차선으로 실제 핸드오프
             set_ask_status("일반 지식 답변 중… (웹 검색 가능)")
             gen2 = ("%s 너는 \"가리\" — 형님의 솔직한 부하이자 PM이다. 일반 질문이다. "

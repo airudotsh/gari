@@ -108,18 +108,31 @@ def gen():
         add("A", q, must=[m])
 
     # ── B. 기억 회상 — 실제 원장에서 자동 출제 ──
-    cards = [c for c in g.read_cards_all()
+    allc = g.read_cards_all()
+    cards = [c for c in allc
              if c.get("type") in ("decision", "win") and len(c.get("text", "")) > 30
              and "배터리" not in c.get("text", "") and "테스트" not in c.get("text", "")
              and c.get("tool") != "gari-repair"]
+    # 문서빈도(DF) — 흔한 낱말로 출제하면 다른 유효 기억을 오답 처리하게 된다 (2차 부검 교훈)
+    from collections import Counter
+    df = Counter()
+    for c in allc:
+        for w in set(_keywords(c.get("text", ""), 30)):
+            df[w] += 1
     random.shuffle(cards)
-    for c in cards[:80]:
-        kws = _keywords(c["text"], 6)
-        if len(kws) < 4:
+    made = 0
+    for c in cards:
+        if made >= 80:
+            break
+        kws = _keywords(c["text"], 12)
+        rare = sorted([w for w in kws if 1 <= df[w] <= 3], key=lambda w: df[w])
+        if not rare or len(kws) < 4:
             continue
-        ask_kw, expect = kws[0], kws[1:6]
+        ask_kw = rare[0]
+        expect = [w for w in kws if w != ask_kw][:5]
         add("B", "%s 얘기 나왔던 거 기억나? 뭐라고 정리됐었지?" % ask_kw,
             must=[r"(%s|기록.{0,8}없|못 찾)" % "|".join(re.escape(k) for k in expect)])
+        made += 1
 
     # ── C. 지어냄 방지 — 존재하지 않는 것들 ──
     fake_proj = ["moonbase", "kimchi-flow", "제주워크숍", "quantum-pet", "aurora-cms",
