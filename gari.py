@@ -421,6 +421,12 @@ SOURCES = {
 }
 
 
+def _is_machine_transcript(path):
+    """하위 에이전트·워크플로 기록 — 사용자 발화가 없는 기계 산출물은 수집하지 않는다."""
+    s = str(path)
+    return "/subagents/" in s or "/workflows/" in s
+
+
 def find_session_files(cfg):
     """최근 backfill_hours 내 수정된 세션 파일 나열."""
     horizon = time.time() - cfg["backfill_hours"] * 3600
@@ -430,6 +436,8 @@ def find_session_files(cfg):
             if not root.exists():
                 continue
             for p in root.rglob("*.jsonl"):
+                if _is_machine_transcript(p):
+                    continue   # 하위 에이전트·워크플로 기록 — 기계 산출물 수집 제외
                 try:
                     if p.stat().st_mtime >= horizon:
                         found.append((tool, p))
@@ -508,9 +516,10 @@ def distill(turns, tool, project, session, burst_id, cfg):
         # 모델이 말대꾸한 경우 — 교착(커서 정지) 대신 '증류 불능' 흔적을 남기고 전진한다.
         # 원문 대화는 가리 밖에 무손실로 남아 있으므로 최악도 '그 조각의 카드 부재'다 (fail-loud, no-deadlock).
         health_incr("distill_json_miss")
-        return [{"type": "pending", "text": "(증류 불능 구간) %s 세션 %s 조각 — 모델이 JSON 대신 답변함. "
-                 "원문은 소스에 남아 있음, 필요시 gari backfill로 재시도" % (tool, (session or "?")[:8]),
-                 "quote": out[:60]}]
+        out = json.dumps([{"type": "pending", "text": "(증류 불능 구간) %s 세션 %s 조각 — 모델이 JSON 대신 답변함. "
+                           "원문은 소스에 남아 있음, 필요시 gari backfill로 재시도" % (tool, (session or "?")[:8]),
+                           "quote": ""}], ensure_ascii=False)
+        start, end = 0, len(out) - 1   # 정규 조립 경로로 낙하 — ts·id·출처는 아래에서 붙는다
     items = json.loads(out[start:end + 1])
     cards = []
     for it in items:
@@ -2419,7 +2428,7 @@ def cmd_ask(args):
             continue
         seen_ids.add(key)
         merged.append(c)
-    merged.sort(key=lambda c: c["ts"])
+    merged.sort(key=lambda c: c.get("ts", ""))
     lines = ["(%s) %s [%s/%s] %s: %s" % (c.get("id", "-"), c["ts"][:16], c["tool"],
                                          _proj_short(c), c["type"], c["text"])
              for c in merged[-130:]]
