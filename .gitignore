@@ -19,3 +19,5 @@ tests/pm-battery/
 tests/pm-ask*/
 queue/
 secrets.env
+smol/.venv/
+smol/sandbox/
