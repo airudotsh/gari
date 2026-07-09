@@ -207,9 +207,92 @@ def shadow_stale_decisions(cards):
     return out
 
 
-def open_pendings(cards, include_snoozed=False):
+import math
+
+ACCESS_PATH = STORE / "card-access.json"
+
+
+def _access():
+    return load_json(ACCESS_PATH, {})
+
+
+def bump_access(card_ids):
+    """카드가 답변에 인용되면 접근 횟수·시각 갱신 (기억 강도의 재료). 원장은 안 건드린다."""
+    if not card_ids:
+        return
+    a = _access()
+    now = now_iso()
+    for cid in card_ids:
+        if not cid:
+            continue
+        rec = a.get(cid, {"count": 0, "last": now})
+        rec["count"] = rec.get("count", 0) + 1
+        rec["last"] = now
+        a[cid] = rec
+    save_json(ACCESS_PATH, a)
+
+
+def card_retention(card, access=None, ref_days=None):
+    """에빙하우스 잔존율 0~1 (agent-second-brain 차용). 강도 S = 1 + ln(1+접근수),
+    잔존 R = exp(-경과일 / (S * 감쇠상수)). 자주 쓰면 선명, 안 쓰면 흐려진다."""
+    access = access if access is not None else _access()
+    cid = card.get("id", "")
+    rec = access.get(cid, {})
+    strength = 1.0 + math.log(1.0 + rec.get("count", 0))
+    last = rec.get("last") or card.get("ts", "")
+    try:
+        elapsed = (datetime.now().astimezone() - datetime.fromisoformat(last)).total_seconds() / 86400.0
+    except (ValueError, TypeError):
+        elapsed = 0.0
+    return math.exp(-max(elapsed, 0.0) / (strength * 30.0))   # 감쇠상수 30일
+
+
+def _bm25_index(cards):
+    """BM25 인덱스 (stdlib, 임베딩 없음). 한국어 어절+영숫자 토큰."""
+    from collections import Counter
+    def toks(t):
+        return re.findall(r"[가-힣]{2,}|[a-zA-Z0-9]{2,}", (t or "").lower())
+    docs = [toks(c.get("text", "") + " " + str(c.get("project", ""))) for c in cards]
+    df = Counter()
+    for d in docs:
+        for w in set(d):
+            df[w] += 1
+    avgdl = (sum(len(d) for d in docs) / len(docs)) if docs else 1.0
+    return docs, df, avgdl, len(cards), toks
+
+
+def bm25_rank(cards, query, k=40, access=None):
+    """하이브리드 랭킹 (GBrain 차용): BM25 관련성 × 잔존율(강도·최신) 가중. 상위 k 카드 반환.
+    키워드 부분일치보다 '진짜 관련된 기억'을 끌어올려 회상 정확도를 높인다."""
+    if not cards:
+        return []
+    docs, df, avgdl, N, toks = _bm25_index(cards)
+    q = toks(query)
+    access = access if access is not None else _access()
+    from collections import Counter
+    K1, B = 1.5, 0.75
+    scored = []
+    for i, c in enumerate(cards):
+        tf = Counter(docs[i])
+        dl = len(docs[i]) or 1
+        s = 0.0
+        for w in q:
+            if w not in tf:
+                continue
+            idf = math.log(1 + (N - df[w] + 0.5) / (df[w] + 0.5))
+            s += idf * (tf[w] * (K1 + 1)) / (tf[w] + K1 * (1 - B + B * dl / avgdl))
+        if s > 0:
+            s *= (0.4 + 0.6 * card_retention(c, access))   # 잔존율 가중 (안 쓰는 기억은 하향)
+        scored.append((s, i, c))
+    scored.sort(key=lambda x: (x[0], x[2].get("ts", "")), reverse=True)
+    return [c for s, i, c in scored[:k] if s > 0]
+
+
+def open_pendings(cards, include_snoozed=False, include_faded=False):
     """미결 중 아직 해소 안 된 것 — 브리핑·보고·resolve가 같은 목록과 번호를 봐야 한다.
-    재워둔 것(snooze)은 기한 전까지 목록에서 숨긴다 — '지금 결정 안 함'도 유효한 처리다."""
+    재워둔 것(snooze)은 기한 전까지 숨긴다. 흐려진 것(fade: 14일+ 미접근+저잔존)도 활성 목록에서
+    강등한다 — 삭제가 아니라 강등이라 include_faded=True로 되살릴 수 있다 (망각곡선, 낡은 미결 자동 정리)."""
+    _acc = _access()
     resolved_ids = {c.get("resolves") for c in cards if c.get("resolves")}
     resolved_texts = {c.get("resolves_text") for c in cards if c.get("resolves_text")}
     snoozed = {}
@@ -225,6 +308,14 @@ def open_pendings(cards, include_snoozed=False):
             continue
         if not include_snoozed and snoozed.get(c.get("id"), "") > today:
             continue
+        if not include_faded:
+            # 흐려짐: 14일 넘게 아무도 안 들춘 미결이 잔존율 0.2 미만이면 강등
+            try:
+                age = (datetime.now().astimezone() - datetime.fromisoformat(c["ts"])).days
+            except (ValueError, KeyError):
+                age = 0
+            if age >= 14 and c.get("id") not in _acc:
+                continue   # 14일 넘게 한 번도 안 들춘 미결 = 흐려짐 (되살리기: include_faded)
         out.append(c)
     return out
 
@@ -600,6 +691,41 @@ def acquire_sweep_lock(cfg):
     return lock
 
 
+def consolidate_pendings(cfg):
+    """야간 증류 (GBrain 차용): 같은 프로젝트에서 토큰이 크게 겹치는 미결들을 최신 하나로 병합,
+    나머지는 (해소) 카드로 접는다. 원장 append-only 존중 — 삭제 아니라 해소 카드 추가."""
+    cards = read_cards_all()
+    pend = open_pendings(cards, include_faded=True)
+    def toks(t):
+        return set(re.findall(r"[가-힣]{2,}|[a-zA-Z0-9]{2,}", (t or "").lower()))
+    by_proj = {}
+    for c in pend:
+        by_proj.setdefault(c.get("project", "?"), []).append(c)
+    merged, dropped = 0, []
+    for cs in by_proj.values():
+        cs = sorted(cs, key=lambda c: c.get("ts", ""), reverse=True)   # 최신 우선
+        kept = []
+        for c in cs:
+            ct = toks(c["text"])
+            if not ct:
+                continue
+            dup_of = next((k for k in kept
+                           if len(ct & toks(k["text"])) >= max(4, int(len(ct) * 0.6))), None)
+            if dup_of and c.get("id"):
+                dropped.append((c, dup_of))
+            else:
+                kept.append(c)
+    for c, keeper in dropped[:20]:   # 스윕당 상한 20 (폭주 방지)
+        append_cards([{"id": hashlib.md5(("dedup" + c["id"]).encode()).hexdigest()[:8],
+                       "ts": now_iso(), "tool": "gari-consolidate", "project": c.get("project", ""),
+                       "session": "", "burst": "dedup", "type": "correction",
+                       "resolves": c["id"],
+                       "text": "(해소) 중복 미결 병합 — '%s'는 최신 '%s'로 통합" % (
+                           c["text"][:40], keeper["text"][:40])}])
+        merged += 1
+    return merged
+
+
 def cmd_sweep(args):
     cfg = load_config()
     lock = acquire_sweep_lock(cfg)
@@ -787,6 +913,12 @@ def _sweep_inner(args, cfg):
         collect_pulse(cfg)  # git 실측 — 말없이 코드로만 진행된 일도 본다
     except Exception as e:
         errors.append("pulse: %s" % e)
+    try:
+        n_merged = consolidate_pendings(cfg)  # 중복 미결 병합 (야간 증류)
+        if n_merged:
+            errors.append("(정보) 중복 미결 %d건 병합" % n_merged) if False else None
+    except Exception as e:
+        errors.append("consolidate: %s" % e)
     try:
         cron_due(cfg)  # 사용자 정의 예약
     except Exception as e:
@@ -1943,6 +2075,21 @@ catch(e){el.textContent=old;el.disabled=false;add('ga','실패 — 서버 연결
                          + "<title>가리 관제실</title>" + shell, encoding="utf-8")
 
 
+def cmd_smol(args):
+    """gari smol "<작업>" [--judge] — 가리 v2 엔진(smolagents) 호출.
+    가리가 claude -p(남의 하네스)가 아니라 자기 엔진으로 도는 독립 경로. 3.11 venv 브리지."""
+    venv_py = GARI_HOME / "smol" / ".venv" / "bin" / "python"
+    agent = GARI_HOME / "smol" / "gari_agent.py"
+    if not venv_py.exists() or not agent.exists():
+        print("smol 엔진 미설치 — ~/gari/smol 세팅 필요 (venv + smolagents)")
+        return 1
+    if not args:
+        print('사용법: gari smol "작업" [--judge]')
+        return 1
+    r = subprocess.run([str(venv_py), str(agent)] + args, env=CLAUDE_ENV)
+    return r.returncode
+
+
 def cmd_serve(args):
     """gari serve — 관제실 웹 서버 (127.0.0.1 전용, 표준 라이브러리, 의존성 0).
     보안: 루프백 바인드만 — 외부 접근 불가. 인증 없음은 1인 로컬 전제."""
@@ -2989,10 +3136,9 @@ def cmd_ask(args):
 
     cards = read_cards(cfg["briefing_days"])
     # 관련 카드 소환: 질문 키워드로 전체 원장 검색 → 최신 창에 합류 (최신 홍수에 기억이 밀려나지 않게)
-    tokens = [t for t in re.findall(r"[가-힣a-zA-Z0-9]{2,}", question)][:8]
     pool = shadow_stale_decisions(read_cards_all())
-    relevant = [c for c in pool
-                if any(t in c.get("text", "") or t in str(c.get("project", "")) for t in tokens)][-40:]
+    relevant = bm25_rank(pool, question, k=40)   # 하이브리드: BM25 관련성 × 잔존율 (GBrain 차용)
+    _cited_ids = [c.get("id") for c in relevant[:12] if c.get("id")]
     seen_ids = set()
     merged = []
     for c in relevant + cards[-90:]:
@@ -3309,6 +3455,10 @@ def cmd_ask(args):
         answer = judge_nag(question, answer, cfg)
     set_ask_status("")
     metric("ask_answered", question[:60])
+    try:
+        bump_access(_cited_ids)   # 인용된 기억은 강도가 오른다 (망각곡선 역방향)
+    except Exception:
+        pass
     if re.search(r"(기록은 없|기록이 없|못 찾았|찾을 수 없)", answer):
         log_miss(question)   # 회수 실패 — 주간 반성의 재료
     append_chat(sid, question, answer)   # 대화 이어짐의 원장
@@ -4624,7 +4774,7 @@ def main():
         "sweep": cmd_sweep, "report": cmd_report, "brief": cmd_brief,
         "status": cmd_status, "enqueue": cmd_enqueue, "done": cmd_done,
         "resolve": cmd_resolve, "log": cmd_log,
-        "ask": cmd_ask, "do": cmd_do, "pet": cmd_pet, "hud": cmd_hud, "weekly": cmd_weekly, "grade": cmd_grade, "chat": cmd_chat, "cost": cmd_cost, "doctor": cmd_doctor, "init": cmd_init, "wiki": cmd_wiki, "triage": cmd_triage, "snooze": cmd_snooze, "backfill": cmd_backfill, "project": cmd_project, "pulse": cmd_pulse, "merge": cmd_merge, "skill": cmd_skill, "cron": cmd_cron, "event": cmd_event, "gateway": cmd_gateway, "dash": cmd_dash, "serve": cmd_serve,
+        "ask": cmd_ask, "do": cmd_do, "pet": cmd_pet, "hud": cmd_hud, "weekly": cmd_weekly, "grade": cmd_grade, "chat": cmd_chat, "cost": cmd_cost, "doctor": cmd_doctor, "init": cmd_init, "wiki": cmd_wiki, "triage": cmd_triage, "snooze": cmd_snooze, "backfill": cmd_backfill, "project": cmd_project, "pulse": cmd_pulse, "merge": cmd_merge, "skill": cmd_skill, "cron": cmd_cron, "event": cmd_event, "gateway": cmd_gateway, "dash": cmd_dash, "serve": cmd_serve, "smol": cmd_smol,
     }
     args = sys.argv[1:]
     if not args or args[0] not in cmds:
