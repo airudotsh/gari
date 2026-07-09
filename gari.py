@@ -282,7 +282,7 @@ def bm25_rank(cards, query, k=40, access=None):
             idf = math.log(1 + (N - df[w] + 0.5) / (df[w] + 0.5))
             s += idf * (tf[w] * (K1 + 1)) / (tf[w] + K1 * (1 - B + B * dl / avgdl))
         if s > 0:
-            s *= (0.4 + 0.6 * card_retention(c, access))   # 잔존율 가중 (안 쓰는 기억은 하향)
+            s *= (0.75 + 0.25 * card_retention(c, access))   # 관련성 우위 (최신 홍수가 회상 삼키지 않게 완화)
         scored.append((s, i, c))
     scored.sort(key=lambda x: (x[0], x[2].get("ts", "")), reverse=True)
     return [c for s, i, c in scored[:k] if s > 0]
