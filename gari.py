@@ -1968,6 +1968,26 @@ def build_dash(cfg):
         v_log.append(row(["<div class='empty'>최근 2주 결정 없음</div>", "", ""]))
     v_log.append("</tbody></table></div>")
 
+    # ═══ 스킬 루프 뷰 (하네스 프로덕트 제작 스킬 + 실행 이력) ═══
+    hskills = load_harness_skills(cfg)
+    hruns = []
+    if HARNESS_RUNS.exists():
+        for line in HARNESS_RUNS.read_text(encoding="utf-8").splitlines()[-15:][::-1]:
+            try:
+                hruns.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    v_skill = ["<h1>스킬 루프</h1><p class='lead'>프로덕트 제작 하네스 스킬 %d종 — 접수→기획→설계→구현→검증→출시의 절차를 "
+               "가리가 프로젝트 폴더에 대고 돌린다. 회사 코드는 안 건드리고 스킬 절차만 주입.</p>" % len(hskills)]
+    v_skill.append("<h2>최근 스킬 실행</h2><div class='card' style='padding:4px 6px'><table><tbody>%s</tbody></table></div>" % (
+        "".join(row(["<span class='num dim'>%s</span>" % e(r.get("ts", "")[5:16]),
+                     "<span class='badge live'>%s</span>" % e(r.get("skill", "")),
+                     e(Path(r.get("dir", "?")).name), e(r.get("task", "")[:50])]) for r in hruns)
+        or row(["<div class='empty'>아직 실행 없음 — gari harness run &lt;스킬&gt; --in &lt;폴더&gt;</div>", "", "", ""])))
+    v_skill.append("<h2>보유 스킬 — 파이프라인 순</h2><div class='card' style='padding:4px 6px'><table><tbody>%s</tbody></table></div>" % (
+        "".join(row(["<b>%s</b>" % e(n), e(s["desc"][:88])]) for n, s in hskills.items())
+        or row(["<div class='empty'>하네스 미연결</div>", ""])))
+
     # ═══ 소개 뷰 (과한 친절) ═══
     v_intro = ["<h1>가리는 무엇인가</h1>",
                "<p class='lead'>가리는 아이루의 개인 AI 비서입니다. 모든 AI 도구와 나눈 대화를 스스로 모아 기억하고, "
@@ -1998,7 +2018,7 @@ def build_dash(cfg):
     # ═══ 셸 조립 ═══
     views = [("today", "오늘", len(sk) or ""), ("inbox", "처리함", len(pend_all)),
              ("auto", "자동화", len(crons) + len(live_pj) or ""), ("live", "실황", ""),
-             ("log", "기록", ""), ("intro", "소개", "")]
+             ("log", "기록", ""), ("skill", "스킬", len(load_harness_skills(cfg)) or ""), ("intro", "소개", "")]
     nav = "".join("<button data-v='%s'><span class='t'>%s</span>%s</button>" % (
         v, label, ("<span class='cnt'>%s</span>" % cnt) if cnt != "" else "")
         for v, label, cnt in views)
@@ -2027,6 +2047,7 @@ def build_dash(cfg):
              + "<div class='view' id='v-auto'>%s</div>" % "".join(v_auto)
              + "<div class='view' id='v-live'>%s</div>" % "".join(v_live)
              + "<div class='view' id='v-log'>%s</div>" % "".join(v_log)
+             + "<div class='view' id='v-skill'>%s</div>" % "".join(v_skill)
              + "<div class='view' id='v-intro'>%s</div>" % "".join(v_intro)
              + "</main>"
              + """<div id='chat'><div class='hd'><b>가리에게 말 걸기</b>
@@ -2073,6 +2094,71 @@ catch(e){el.textContent=old;el.disabled=false;add('ga','실패 — 서버 연결
                          "<meta name='viewport' content='width=device-width,initial-scale=1'>"
                          + ("<link rel='icon' href=\"%s\">" % _FAV)
                          + "<title>가리 관제실</title>" + shell, encoding="utf-8")
+
+
+HARNESS_RUNS = STORE / "harness-runs.jsonl"
+
+
+def load_harness_skills(cfg=None):
+    """~/harness/skills/*/SKILL.md 을 읽어 {name: {desc, path}} 반환 (프론트매터 파싱, 무LLM).
+    가리 소유로 설계된 프로덕트 제작 스킬 28종 — 회사 코드는 안 건드리고 스킬 정의만 읽는다."""
+    cfg = cfg or load_config()
+    root = Path(cfg.get("harness_dir", "")) / "skills"
+    out = {}
+    if not root.exists():
+        return out
+    for sk in sorted(root.glob("*/SKILL.md")):
+        name = sk.parent.name
+        desc = ""
+        try:
+            body = sk.read_text(encoding="utf-8")
+            m = re.search(r"description:\s*(.+)", body)
+            if m:
+                desc = m.group(1).strip()[:200]
+        except OSError:
+            continue
+        out[name] = {"desc": desc, "path": str(sk)}
+    return out
+
+
+def _harness_skill_body(cfg, name):
+    sk = load_harness_skills(cfg).get(name)
+    if not sk:
+        return None
+    return Path(sk["path"]).read_text(encoding="utf-8")
+
+
+def cmd_harness(args):
+    """gari harness — 스킬 목록 / gari harness run <스킬> --in <폴더> "작업" — 스킬 절차로 파견."""
+    cfg = load_config()
+    skills = load_harness_skills(cfg)
+    if not skills:
+        print("하네스 스킬 없음 — config harness_dir 확인 (%s)" % cfg.get("harness_dir"))
+        return 1
+    if args and args[0] == "run" and len(args) >= 2:
+        name = args[1]
+        if name not in skills:
+            print("없는 스킬: %s (목록: gari harness)" % name)
+            return 1
+        workdir, rest = None, []
+        i = 2
+        while i < len(args):
+            if args[i] == "--in":
+                i += 1
+                workdir = str(Path(args[i]).expanduser().resolve())
+            else:
+                rest.append(args[i])
+            i += 1
+        task = " ".join(rest) or "이 스킬의 절차를 이 폴더에서 수행하라."
+        with open(HARNESS_RUNS, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": now_iso(), "skill": name, "dir": workdir or "?",
+                                "task": task[:120], "status": "dispatched"}, ensure_ascii=False) + "\n")
+        print("하네스 스킬 '%s' 파견 — %s" % (name, workdir or os.getcwd()))
+        return cmd_do(["--skill", name] + (["--in", workdir] if workdir else []) + ["--write", task])
+    print("하네스 스킬 %d종 (gari harness run <이름> --in <폴더> \"작업\"):" % len(skills))
+    for n, s in skills.items():
+        print("  %-14s %s" % (n, s["desc"][:70]))
+    return 0
 
 
 def cmd_smol(args):
@@ -3471,7 +3557,7 @@ def cmd_do(args):
     가리가 저장소 맥락을 지시문에 포장해 실무 AI에게 맡기고 결과를 보고한다.
     결과 세션은 다음 스윕에서 자동 적재된다 (자기 기록 루프)."""
     cfg = load_config()
-    workdir, tool, write, bg, mark, task_words = None, cfg["do_tool_default"], False, False, None, []
+    workdir, tool, write, bg, mark, skill, task_words = None, cfg["do_tool_default"], False, False, None, None, []
     i = 0
     while i < len(args):
         if args[i] == "--in":
@@ -3487,10 +3573,18 @@ def cmd_do(args):
         elif args[i] == "--mark":
             i += 1
             mark = args[i]
+        elif args[i] == "--skill":
+            i += 1
+            skill = args[i]
         else:
             task_words.append(args[i])
         i += 1
     task = " ".join(task_words)
+    if skill:
+        body = _harness_skill_body(cfg, skill)
+        if body:
+            task = ("[하네스 스킬: %s] 아래 스킬 절차를 이 작업에 그대로 적용하라.\n%s\n\n[작업]\n%s"
+                    % (skill, body[:4000], task))
     if bg:
         # 백그라운드 파견 — 형님은 기다리지 않는다. 끝나면 알림 + 카드.
         child_args = [str(GARI_HOME / "bin" / "gari"), "do", task]
@@ -4774,7 +4868,7 @@ def main():
         "sweep": cmd_sweep, "report": cmd_report, "brief": cmd_brief,
         "status": cmd_status, "enqueue": cmd_enqueue, "done": cmd_done,
         "resolve": cmd_resolve, "log": cmd_log,
-        "ask": cmd_ask, "do": cmd_do, "pet": cmd_pet, "hud": cmd_hud, "weekly": cmd_weekly, "grade": cmd_grade, "chat": cmd_chat, "cost": cmd_cost, "doctor": cmd_doctor, "init": cmd_init, "wiki": cmd_wiki, "triage": cmd_triage, "snooze": cmd_snooze, "backfill": cmd_backfill, "project": cmd_project, "pulse": cmd_pulse, "merge": cmd_merge, "skill": cmd_skill, "cron": cmd_cron, "event": cmd_event, "gateway": cmd_gateway, "dash": cmd_dash, "serve": cmd_serve, "smol": cmd_smol,
+        "ask": cmd_ask, "do": cmd_do, "pet": cmd_pet, "hud": cmd_hud, "weekly": cmd_weekly, "grade": cmd_grade, "chat": cmd_chat, "cost": cmd_cost, "doctor": cmd_doctor, "init": cmd_init, "wiki": cmd_wiki, "triage": cmd_triage, "snooze": cmd_snooze, "backfill": cmd_backfill, "project": cmd_project, "pulse": cmd_pulse, "merge": cmd_merge, "skill": cmd_skill, "cron": cmd_cron, "event": cmd_event, "gateway": cmd_gateway, "dash": cmd_dash, "serve": cmd_serve, "smol": cmd_smol, "harness": cmd_harness,
     }
     args = sys.argv[1:]
     if not args or args[0] not in cmds:
