@@ -1,97 +1,85 @@
-# 가리 설치 인벤토리 — 뭐가 깔리고, 뭘 할 수 있나 (2026-07-06 실측)
+# Gari inventory — what gets installed, and what it can do
 
-> 팀 배포·오픈소스의 기초 문서. "가리를 설치한다"의 정확한 의미.
+> What "installing Gari" means, exactly. Direction: [NORTH-STAR.md](NORTH-STAR.md).
 
-## 1. 설치되는 것 (풋프린트 — 총 ~1.1MB, 서버·데몬 0개)
+## 1. What gets installed (footprint ~1 MB, no server, no daemon)
 
-| 위치 | 정체 | 성격 |
+| Location | What | Notes |
 |---|---|---|
-| `~/gari/` | 본체 전부 — 엔진(gari.py)·설정(config.json)·프롬프트(templates/)·**데이터(store/·works/·reports/)** | 폴더 하나가 곧 가리. 지우면 깨끗이 사라짐 |
-| `~/.local/bin/gari` | 터미널 명령 심링크 | PATH 등록용 1줄 |
-| `~/Library/LaunchAgents/com.airu.gari-*.plist` ×4 | 예약 실행: sweep(10분)·morning(09:00)·weekly(월 09:30)·pet(로그인 시) | macOS 표준 스케줄러 — 상주 프로세스 아님 |
-| `/Applications/Gari.app` | 펫 앱 껍데기 (Spotlight "Gari" → 깨우기) | 실체는 ~/gari/pet/gari-pet 사본 |
-| Claude `settings.json` 훅 2개 | SessionStart(브리핑 주입)·Stop(수집 신호) | 기존 설정에 **추가**됨 (덮어쓰기 아님) |
-| Codex `hooks.json` 훅 1개 + `AGENTS.md` 1절 | Stop 신호 + 브리핑 읽기 지시 | 〃 |
+| Gari's home (this repo, default `~/gari`) | Engine (`gari.py`), config (`config.json`), secrets (`secrets.env`, mode 600), prompts (`templates/`), **data** (`store/`, `works/`, `reports/`) | One folder is Gari. Delete it and Gari is gone |
+| `~/.local/bin/gari` | Terminal command (symlink) | |
+| `~/Library/LaunchAgents/com.airu.gari-*.plist` ×4 | Schedules: sweep (every 10 min), morning (report hour), weekly (Mon 09:30), pet (at login) | macOS scheduler — nothing stays resident |
+| `/Applications/Gari.app` | Pet app shell (Spotlight "Gari" wakes it) | A copy of `pet/gari-pet` |
+| Claude Code `settings.json` — 2 hooks | SessionStart (briefing) · Stop (collection signal) | **Added** to existing settings, with a backup |
+| Codex `hooks.json` — 1 hook | Stop signal | Only if Codex is installed |
 
-**읽기만 하는 곳 (수정 없음):** `~/.claude/projects/`, `~/.codex/sessions/`, `~/.gjc/agent/sessions/` — 각 CLI의 대화 기록. 원본 무복사, 읽은 위치(커서)만 기억.
+**Read-only (never modified):** `~/.claude/projects/`, `~/.codex/sessions/`, `~/.gjc/agent/sessions/`. Gari keeps cursors (how far it has read), never copies.
 
-**밖으로 나가는 데이터: 없음.** 전부 로컬. LLM 호출은 본인 Claude 계정으로 직접 (가리 서버 경유 없음).
+**What leaves the machine:** only model calls — to the Claude API with your own key (or through Claude Code). No Gari server.
 
-## 2. 할 수 있는 것 (능력 지도)
+## 2. What it can do
 
-### 자동으로 (설치하면 그냥 됨)
-- **수집·증류**: 10분마다 모든 CLI 대화 → 카드(결정·미결·교정·연승) — 프로젝트 자동 분류
-- **아침 결재 보고** (09:00): 어제 정리 + 오늘의 한 칸 + 가리의 질문 + 참견 + 워치리스트 + 결재함
-- **주간 종합보고** (월 09:30): 추세·재설명 지표·교정 모음
-- **세션 브리핑 주입**: 어느 CLI를 열든 직전 결정·미결이 자동으로 실림 — 재설명 제로
-- **완료 알림**: 파견 작업이 끝나면 macOS 알림
-- **관제실(gari dash) = 본체** (2026-07-08 사용자 선언): 처리함 티켓·오늘 카드·자동화 내역(예약 실행·파견 보고·프로젝트 이력)·기록 열람·채팅·결재/합류/정리 버튼 — 가리의 모든 것을 보고 조작하는 웹 콘솔 (127.0.0.1 전용)
-- **펫**: 가벼운 챗 + 상태 표정 (유휴=잠, 작업=기포, 이상=배뒤집힘) — 본체가 아니라 어깨 위 동반자
-- **실측 펄스**: 프로젝트 폴더의 git 활동(커밋·미커밋)을 10분마다 수집 — 대화에 안 나온 코드 작업도 방향판·브리핑·아침 보고에 반영
-- **워크트리 격리**: 형님 레포에 쓰기 파견 시 격리 사본에서 작업, 산출은 gari/ 브랜치에 봉인 (원본 무접촉, 합류는 `gari merge`)
-- **뇌 레지스트리** (2026-07-08): 클로드·gjc·코덱스 + API 뇌(DeepSeek·Qwen·GLM·Kimi 프리셋 — 키만 넣으면 켜짐). 접수는 폴백 체인으로 생존, 최악엔 비상 속하네스(자체 미니 에이전트 루프)가 손을 받침
-- **프로젝트 그래프 실행** (2026-07-08): 계획서가 단계 의존성 그래프 — 준비된 단계는 동시 파견(상한 3), 실무자 [발견] 보고 시 자동 재계획, 검수 실패도 재파견 전에 재설계 우선
-- **스킬** (2026-07-08): 특정 상황 전용 방법을 store/skills에 적어두면 관련 질문에 자동 동봉 — 가리가 상황별 전문성을 갖는 단위. 주간 반성이 승격 제안
-- **예약** (2026-07-08): "매일 아침 ~확인해줘" 한 마디(+ㄱㄱ 승인)로 반복 임무 등록 — 결과는 알림+기록
-- **이벤트 관문** (2026-07-08): 외부 스크립트가 `gari event "..."`로 사건을 밀어넣으면 다음 정리에 합류
-- **텔레그램 게이트웨이** (2026-07-08, 휴면): 봇 토큰만 넣으면 폰에서 가리와 대화 — 허용된 계정만 응답
-- **참견 품질 게이트** (2026-07-08): 참견은 내보내기 전 자동 판정(가르치는 짚기 vs 헛짚기) — 헛짚기는 회수. 형님의 맞음 채점은 실예시 풀로 쌓여 다음 참견의 기준이 됨
+### Automatically
+- **Collect & distill** every 10 min: CLI conversations → cards (decision, pending, correction, win), grouped by project
+- **Morning report**: yesterday's summary, today's one step, Gari's question, a nudge, watchlist, sign-off box
+- **Weekly report** (Mon 09:30): trends, the re-explanation metric, corrections
+- **Session briefing**: recent decisions and pendings at session start (or on demand with `gari brief`)
+- **Dashboard** (`gari dash`, 127.0.0.1 only): inbox, today's cards, automation history, log, chat, sign-off/merge buttons
+- **Pet**: quick chat + honest mood (idle = asleep, working = bubbles, problem = belly-up)
+- **Measured pulse**: git activity in project folders — code work never mentioned in chat still shows up
+- **Worktree isolation**: write-delegations to your repos run in an isolated copy; merging is `gari merge`
+- **Brain registry**: Claude (API or Claude Code) first; optional extra API brains via `executors`, with a fallback chain
+- **Staged projects**: a plan with a dependency graph — ready stages run in parallel (max 3), real-output verification per stage, replan on findings
+- **Skills**: method notes in `store/skills/` attached when a trigger matches
+- **Schedules**: "every morning, check …" + "go" registers a recurring task
+- **Event gate**: `gari event "…"` lets external scripts push events
+- **Telegram gateway** (off until a bot token is set)
+- **Nudge quality gate**: each nudge is judged before it's shown; misses are pulled; your grades become examples
 
-### 물어보면 (대화 — 펫 클릭 → 대화 탭, 또는 `gari ask`)
-- **기억 질문**: "어제 뭐 정했지" → 카드 근거 + 출처 (haiku, 수 초). 과거 맥락은 가리에게 묻는 게 정본 —
-  다른 CLI 세션엔 가리 내용이 자동 주입되지 않는다 (2026-07-08 경계 확정: 가리는 관찰자, 타 CLI는 깨끗한 도구.
-  필요하면 그 세션에서 `gari brief`로 직접 당겨온다)
-- **문서 질문**: 카드에 없으면 로컬 문서 자동 수색
-- **일반·최신 질문**: 웹 검색 포함 (sonnet)
-- **계획·판단 질문**: 사고 원전(제1원칙·Working Backwards·문의 종류 등 11종) 기반 깊은 답 (sonnet)
-- **참견**: 모든 답 끝에 놓친 것 짚기 (디자인씽킹+PM 렌즈)
-- **지속 지시 학습**: "앞으로 ~해줘"라고 말하면 저장돼 이후 모든 답변·현황판 문구에 반영
-- 대화는 세션으로 관리 (이어하기 기본, 새 대화 버튼, 30일 후 보관함)
+### When you ask (`gari ask`, or the pet's chat tab)
+- **Memory**: "what did I decide yesterday?" → answer from cards, with source
+- **Documents**: if the cards are empty, local docs are searched
+- **General & current questions**: with web search
+- **Planning & judgment**: deep answers grounded in 11 methodology sources
+- **Nudges**: at the end of answers, the thing you're missing
+- **Standing instructions**: "from now on, …" is saved and applied to everything after
 
-### 시키면 (파견 — 대화에서 "~해줘" → "ㄱㄱ" 승인 → 실행)
-- 가리가 맥락을 싸서 실무 AI(claude/codex/gjc)에 백그라운드 파견 → 결과 저장 + 카드 + 알림 → 나중에 "아까 그거 어떻게 됐어"로 회수
-- **큰일은 프로젝트 파견** (2026-07-07): 여러 단계짜리 일을 시키면 가리가 PM으로 마일스톤 계획서를 만들어 결재를 받고, 10분 심장박동이 단계 파견→**실물 검수**(보고서가 아니라 저장소를 열어 확인)→통과 시 다음 단계를 반복. 검수 2회 불통과면 자동 중단 + 형님 호출. 활성 조건: 소형 파견 10건 무사고 이력 (신뢰 사다리)
+### When you delegate (say "do …" in chat → "go")
+- Gari packages context and hands it to a worker AI (Claude Code / Codex / gjc) in the background → result saved + card + notification
+- Big jobs become staged projects with a plan you approve; each stage is verified against the repo, not the report; two failed checks → it stops and asks you
 
-### 명령 전체
-`gari`(보고) · `ask`(대화) · `do`(파견) · `project`(큰일 단계 파견 PM) · `pulse`(전 프로젝트 git 실측) · `triage`(큐 정리 제안) · `snooze`(미결 재우기) · `chat`(세션 관리) · `hud`(현황판 데이터) · `grade`(코치 채점) · `resolve`(미결 해소) · `log`(카드) · `brief`(브리핑) · `done`(즉시 정리) · `status`(생존 확인) · `cost`(LLM 비용) · `weekly`(주간) · `pet`(펫 켜기/끄기)
+### All commands
+`gari` (report) · `ask` · `do` · `project` · `pulse` · `triage` · `snooze` · `chat` · `hud` · `grade` · `resolve` · `log` · `brief` · `done` · `status` · `cost` · `weekly` · `northstar` · `doctor` · `init` · `pet` · `dash` · `cron` · `skill` · `event` · `merge` · `wiki` · `backfill`
 
-## 3. 첫 세팅 사용자 여정 (2026-07-06 정비)
+## 3. First run
 
 ```
-준비물: macOS + Claude Code 로그인 (유일한 필수 — 가리의 뇌)
+Needs: macOS + a Claude API key (console.anthropic.com). Claude Code is optional (needed for `gari do` and document search).
   ↓
-./install.sh          전제조건 검사 → 명령 등록 → 펫 빌드·앱 설치 → init 자동 진입
+./install.sh      prerequisites → command → pet build → gari init
   ↓
-gari init             ① 호칭 ② 수집 폴더 ③ 보고 시각 질문 (10초)
-                      → 훅·예약실행 자동 등록 → gari doctor 진단표 출력
+gari init         name, form of address, collection folders, report hour (≈10 s)
+                  → hooks + schedules registered → gari doctor
   ↓
-끝. 펫 등장 — 이후는 평소처럼 일만 하면 됨 (2일차 아침 첫 보고)
+Done. Keep working as usual — first morning report on day 2.
 ```
 
-- **`gari doctor`**: 뭔가 이상할 때의 시작점 — Claude 로그인(실호출 검사)·예약실행·훅·최근 스윕까지 ✓/✗ 진단 + 조치 명령 제시
-- **`gari init`**: 몇 번을 다시 돌려도 안전 (설정만 갱신, 등록된 건 건너뜀)
-- Claude가 로그아웃 상태면: 수집·펫·기록 열람은 계속 되고, **증류·대화·보고만 멈춤** — 실패 시 "claude 실행해 로그인 확인" 안내가 뜸
+- **`gari doctor`**: start here when something feels off — API key, live call, schedules, hooks, last sweep.
+- **`gari init`** is safe to re-run.
+- If the brain is unreachable: collection, pet, and the log keep working; distillation, chat, and reports pause with a clear message.
 
-## 3-1. 의존성 (팀원에게 필요한 것)
+## 4. Cold start
 
-- **필수**: macOS + Claude Code CLI 로그인 (가리의 뇌 — 본인 구독으로 호출됨. 비용은 `gari cost`로 투명)
-- **선택**: Codex CLI, gjc — 있으면 자동 감지해 수집·파견 차선으로 활용, 없어도 동작
-- **개인화 재료** (없어도 동작, 있으면 좋음): 방향 문서(north-star류) — 없으면 일반 PM 페르소나로
-
-## 4. 콜드스타트 — "brain 데이터 없이도 되나?"
-
-된다 — 절반은 즉시, 절반은 가리가 스스로 쌓는다. 가리는 brain 데이터의 소비자가 아니라 **생산자**다 (증류 파이프라인 = 실시간 마이닝).
-
-| 시점 | 되는 것 |
+| When | What works |
 |---|---|
-| 설치 직후 | 일반·최신 질문(웹검색), 깊은 판단(사고 원전 동봉), 참견(범용 렌즈), 파견 |
-| 반나절 | 기억 질문 ("아까 뭐 정했지") — 첫 카드들 |
-| 2일차 | 첫 아침 보고 |
-| 1주 | 참견의 개인화 (미결·교정 패턴) |
-| 2주+ | 코치 미러링 후보 (채점 누적 시) |
+| Right after install | General questions, deep judgment, nudges, delegation |
+| Half a day | Memory questions — the first cards |
+| Day 2 | First morning report |
+| Week 1 | Personalized nudges (from your pendings and corrections) |
+| Week 2+ | Shadow-coach calls, once enough grades exist |
 
-유일한 진짜 구멍: "오늘의 한 칸"·방향 참견은 방향 문서(north-star류)가 필요 → `gari init` 미니 인터뷰(10분: 프로젝트 3개와 우선순위·분기 목표·최악의 반복 업무)로 스타터 방향 문서를 생성하는 것이 C3 설계에 포함됨.
+"Today's one step" and direction nudges work best with a direction document — set `north_star_path` in config.
 
-## 5. 제거
+## 5. Uninstall
 
-`launchctl unload ~/Library/LaunchAgents/com.airu.gari-*.plist` → `~/gari`·`/Applications/Gari.app` 삭제 → settings.json/hooks.json의 가리 훅 제거. **원본 대화는 애초에 가리 밖이라 무손실.**
+`launchctl unload ~/Library/LaunchAgents/com.airu.gari-*.plist` → delete Gari's home and `/Applications/Gari.app` → remove the Gari hooks from `~/.claude/settings.json` and `~/.codex/hooks.json`. **Your original conversations were never inside Gari, so nothing is lost.**

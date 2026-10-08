@@ -1,71 +1,71 @@
-# 가리 사전부검 (Premortem) — 2026-07-07
+# Gari premortem
 
-> 방법: Klein의 사전부검 — "가리는 죽었다"고 선언하고, 죽음의 원인을 소급해 쓴다.
-> 각 사인마다: 시나리오 → 조기 신호 → 대책(있음/공백). 이 문서는 주간 보고가 참조하는 감시 목록이다.
+> Method: Klein's premortem — declare "Gari is dead" and write down, in hindsight, what killed it.
+> For each cause: scenario → early signal → countermeasure (in place / gap). The weekly report uses this as its watchlist.
+> Direction: [NORTH-STAR.md](NORTH-STAR.md).
 
-## A층 — 관계 (가장 확률 높은 사인들)
+## A. Relationship (the most likely causes)
 
-**1. 방치사** — 가장 유력한 사인. 바쁜 두 주가 지나고, 아침 보고를 안 연 지 열흘째. 가리는 완벽하게 돌지만 아무도 읽지 않는다. (이 기계에는 이미 같은 무덤이 하나 있다 — 몇 달간 조용히 죽어 있던 기억 시스템.)
-- 조기 신호: `brief_served`·`ask` 메트릭 연속 0일
-- 대책: **잊힘 자가 감지** (사용 공백 3일 → 가리가 먼저 "저 잊히고 있습니다" 발화 — 2026-07-07 구현), 의식의 마찰 최소화(폰 어댑터 v0 계획)
+**1. Death by neglect** — the most likely cause. Two busy weeks go by; the morning report hasn't been opened in ten days. Gari runs perfectly and nobody reads it. (Many personal memory systems die exactly this way — quietly.)
+- Early signal: `brief_served` and `ask_answered` at 0 for consecutive days
+- Countermeasure: **forgetting self-check** (3 days without use → Gari speaks first: "I'm being forgotten") — in place; low-friction surfaces (pet, phone gateway) — in place
 
-**2. 신뢰사** — 오답이 기억으로 세탁되는 사고가 재발하고, "가리 말은 확인해야 해"가 되는 순간 존재 이유가 죽는다.
-- 조기 신호: 정정 카드 빈도 상승, 주간 기억 감사 표본에서 오기 발견
-- 대책: 근거-사용자-발화-한정 규칙, 출력 검증 가드, 모순 순찰, 정정 카드 (전부 있음) + 주간 감사 표본 (있음)
+**2. Death by distrust** — a wrong answer gets laundered into memory, and the moment "I have to double-check what Gari says" sets in, the reason to exist is gone.
+- Early signal: rising correction cards, errors found in the weekly memory-audit sample
+- Countermeasure: cards cite only the user's own words, output checks, contradiction patrol, correction cards, weekly audit sample — all in place
 
-**3. 소음사** — 참견이 3번 연속 헛짚자 무시가 학습된다. 넛지 인플레이션 — 배너 블라인드니스.
-- 조기 신호: 채점 '오발' 비율 상승, 가리의 질문 무응답 연속
-- 대책: 채점 데이터 기반 참견 빈도 조절 (**공백** — 그림자 2주 뒤 구현), 참견은 기존 접점 안에서만(있음)
+**3. Death by noise** — three misfired nudges in a row and ignoring them becomes a habit. Nudge inflation → banner blindness.
+- Early signal: rising "misfire" ratio in grades, Gari's questions left unanswered
+- Countermeasure: nudge quality gate (`judge_nag`) and grade feedback — in place; nudges only inside existing surfaces — in place
 
-## B층 — 가치
+## B. Value
 
-**4. 무증명사** — "좋은 것 같긴 한데"가 석 달 계속되면 동기가 마른다. 측정되지 않는 가치는 우선순위에서 밀린다.
-- 조기 신호: 척도 미정의 상태 지속, 주간 이끌림 신호 무변화
-- 대책: 측정 배관(있음), 재질문 기준선(사용자 입력 대기 중)
+**4. Death by no proof** — "it seems good" for three months and the motivation dries up. Value that isn't measured loses priority.
+- Early signal: north-star metric flat or missing
+- Countermeasure: `gari northstar` (re-explanations ↓, context handoffs ↑, week over week) — in place
 
-**5. 대체사** — 어느 날 상용 제품이 "모든 AI 대화 기억"을 내놓는다. "그냥 그거 쓰지"가 된다.
-- 조기 신호: 시장 동향 (Mem0 OpenMemory 등 이미 존재)
-- 대책: 차별점은 기억이 아니라 **개인 이력의 복리 + 이상향 코치** (상용이 형님의 1년치 판단 이력을 못 베낌). 평문 기억이라 이주도 자유 — 최악에도 데이터는 산다.
+**5. Death by substitution** — a commercial product ships "memory for every AI conversation", and "just use that" wins.
+- Early signal: market moves (memory layers already exist)
+- Countermeasure: the difference is not memory but **a decision ledger sourced from your own words + a coach held to the ideal of the craft**. Plain-text files mean migration is free — even in the worst case, the data survives.
 
-## C층 — 기술
+## C. Technology
 
-**6. 부식사** — Claude CLI가 훅 포맷·로그 구조를 바꾸고, 스윕이 조용히 0장을 줍기 시작한다.
-- 조기 신호: doctor 실패, health의 스윕 오류, 카드 유입 급감
-- 대책: doctor(있음), gjc 증류 폴백(있음), 어댑터 격리 구조(있음), fail-loud(있음)
+**6. Death by corrosion** — a CLI changes its hook format or log structure, and the sweep quietly starts collecting zero cards.
+- Early signal: `gari doctor` failures, sweep errors in health, a sudden drop in card intake
+- Countermeasure: `gari doctor`, adapter isolation, fail-loud — in place
 
-**6-1. 봉쇄사** — CLI 구독의 프로그램적 사용이 약관·가격·기능 제거로 막히는 날 (부식사의 급성형).
-- 조기 신호: -p 헤드리스 호출 제한, 훅 API 제거, 구독 약관 변경
-- 대책(2026-07-08 구축): 실행자 레지스트리 + brain_chain — 뇌는 API(중국모델 포함)로 즉시 교체 가능,
-  손은 비상 속하네스(run_agent_loop, pi 패턴 — 경로 감옥+스텝 상한)가 최소한을 받침. 갈아타기는 config 수정만.
+**6-1. Death by lockout** — programmatic use of a CLI is restricted by terms, pricing, or removed features (the acute form of #6).
+- Early signal: headless-call limits, hook API removal, terms changes
+- Countermeasure: the Claude API is the first-class brain (`ANTHROPIC_API_KEY`); executor registry + `brain_chain`; the emergency mini-harness (`run_agent_loop` — path jail + step limit) keeps minimal delegation alive. Switching is a config change.
 
-**7. 복잡도 자중사** — 이틀간 심은 기능들이 서로를 밟기 시작하고, 고치는 비용이 쓰는 가치를 넘는다. 정원사가 없는 정원.
-- 조기 신호: 사고 빈도 상승, 여정 배터리 통과율 하락
-- 대책: 여정 배터리 = 회귀 감시(있음), 주간 규칙 은퇴 원칙(헌법), "기능보다 루프" 원칙 — 그리고 **기능 다이어트는 미덕**
+**7. Death by its own weight** — features start stepping on each other, and fixing costs more than using. A garden with no gardener.
+- Early signal: more incidents, failing tests
+- Countermeasure: `tests/test_offline.py` as a regression guard, the north-star feature map (anything not on it is a removal candidate) — **feature diets are a virtue**
 
-**8. 단일 빌더사** — 상급 수리가 필요한 사고가 났는데 고칠 손이 없다.
-- 조기 신호: 배터리 실패가 파견 수리로 안 닫힘
-- 대책: 재건 명세(레포+HANDOFF+INVENTORY)와 검증기(journey.py)는 있음. **상급 수리 공백은 정직한 잔여 리스크** — 완화는 구조 단순화와 문서뿐.
+**8. Death by a single builder** — an incident needs a serious repair and nobody can do it.
+- Early signal: incidents that delegation can't close
+- Countermeasure: rebuild docs ([ARCHITECTURE.md](ARCHITECTURE.md), [INVENTORY.md](INVENTORY.md)) and the offline tests. **The repair gap is an honest residual risk** — mitigated only by simple structure and docs.
 
-## D층 — 환경
+## D. Environment
 
-**9. 보안사** — 회사 데이터의 로컬 수집이 정책 문제가 되는 날.
-- 조기 신호: 회사 보안 정책 변화, 외부 감사
-- 대책: 전부 로컬·무전송(있음), denylist 즉시 차단 스위치(있음), 최악에도 회사분만 소거 가능(카드는 프로젝트 태그로 분리돼 있음)
+**9. Death by security policy** — local collection of work conversations becomes a policy problem.
+- Early signal: a policy change at work, an external audit
+- Countermeasure: everything local, only model calls leave the machine; `denylist_paths` / allowlist switch; cards are tagged by project, so one project's data can be removed
 
-**10. 비용사** — 어느 달 청구서가 체감 가치를 넘는 순간.
-- 조기 신호: `gari cost` 월간 추세
-- 대책: 전 호출 계측(있음), 모델 다이얼 노출(있음), 건설기가 끝나면 일상 비용은 하루 $1~3대 예상
+**10. Death by cost** — one month the bill exceeds the felt value.
+- Early signal: the monthly trend in `gari cost`
+- Countermeasure: every call metered, model dials exposed, monthly budget gate — in place
 
-**11. 부적응사** — 형님의 삶이 바뀌었는데(이직·전업·휴식) 가리는 옛 삶의 폴더와 옛 직업의 교과서만 본다. 동행 실패.
-- 조기 신호: 위키 전 프로젝트 활동 0 + 새 이름의 폴더들 등장
-- 대책: init 재실행·교과서 교체 경로(있음), 삶의 동반자 트랙(로드맵) — 단 **전환기 감지 자동화는 공백**
+**11. Death by misfit** — your life changes (new job, new field) and Gari still watches old folders and an old textbook.
+- Early signal: zero activity on every wiki project + new folder names appearing
+- Countermeasure: re-run `gari init`, swap the textbook (templates) — in place. **Automatic detection of life transitions is a gap.**
 
-**12. 정체성 표류사** — 기능이 계속 붙어 "가리가 뭐 하는 애더라"가 되는 죽음. 도구 서랍의 익명 도구로 전락.
-- 조기 신호: 사용자가 정의를 묻는 빈도(이번 주 2회 — 이미 신호였다)
-- 대책: 북극성 v1.1, README의 정의, 현황판 3초 테스트, 이 문서
+**12. Death by identity drift** — features keep piling on until "what does Gari do again?" It becomes an anonymous tool in a drawer.
+- Early signal: people asking for the definition
+- Countermeasure: [NORTH-STAR.md](NORTH-STAR.md), the README's definition, the 3-second dashboard test, this document
 
-## 종합 — 확률 가중 결론
+## Conclusion — weighted by probability
 
-가리를 죽이는 것은 기술이 아니라 **관계다** (1·3·4번이 최고 확률). 그래서 최우선 방어선은 코드가 아니라: 잊힘 자가 감지, 참견 정확도 관리, 그리고 측정 루프. 기술적 사인(6·7·8)은 배터리와 문서가 막고, 환경 사인(9~12)은 구조가 이미 유연하다.
+Gari dies of **relationship**, not technology (#1, #3, #4 are the most likely). So the first line of defense isn't code: the forgetting self-check, nudge accuracy, and the measurement loop. Technical causes (#6–8) are held by tests and docs; environmental causes (#9–12) are absorbed by a flexible structure.
 
-**한 문장 부검 결론: 가리는 버그로 죽지 않는다 — 잊혀서 죽는다. 그래서 가리의 최후 방어선은 "먼저 말 거는 능력"이다.**
+**In one sentence: Gari doesn't die of bugs — it dies of being forgotten. So its last line of defense is the ability to speak first.**

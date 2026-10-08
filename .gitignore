@@ -1,10 +1,10 @@
-# 개인 데이터 — 절대 커밋 금지 (카드 원장·대화·보고·비용·위키)
+# Personal data — never commit (card ledger, chats, reports, costs, wiki)
 store/
 works/
 reports/
 config.json
 
-# 빌드 산출물·기기 상태
+# Build output and machine state
 pet/gari-pet
 pet/position.json
 pet/hud-size.json
@@ -21,3 +21,15 @@ queue/
 secrets.env
 smol/.venv/
 smol/sandbox/
+
+# Runtime markers and local state
+pet/seen-*
+pet/status-snapshot.txt
+pet/tools/dump-pixels
+pending-approvals.json
+tests/journey-results.jsonl
+tests/hello.txt
+.codegraph
+.gjc/
+.jellyfish/
+claude-home/

@@ -1,49 +1,56 @@
-# 가리 확장 지도 — 어디를 고치면 무엇이 되나 (2026-07-08, Fable 건설기 봉인판)
+# Gari extension map — what to change to get what
 
-> 용도: Fable 이후의 유지보수자(사람이든 모델이든)를 위한 지도.
-> 원칙: **코드 수술 전에 이 표에서 "설정/템플릿으로 되는 일"인지 먼저 확인하라** — 가리의 확장 지점 대부분은 코드 밖에 있다.
+> For maintainers (human or model).
+> Rule: **before touching code, check this table for "can this be done with config or templates?"** — most of Gari's extension points live outside the code.
+> Direction comes from [NORTH-STAR.md](NORTH-STAR.md). If a change doesn't serve it, don't make it.
 
-## 1. 코드 안 고치고 되는 것 (설정·템플릿 층)
+## 1. No code changes needed (config and template layer)
 
-| 하고 싶은 것 | 고치는 곳 | 방법 |
+| You want to | Change | How |
 |---|---|---|
-| 뇌(모델) 교체 | `config.json` | `ask_model`(접수·기억·증류·검수) / `ask_fallback_model`(위키·일반) / `deep_model`(판단 6좌석) |
-| 새 API 뇌 추가 (중국모델 등) | `config.json` `executors` | `{"이름": {"type":"api","base_url":"...","key_env":"...","model":"..."}}` + 환경변수에 키. `gari doctor`로 확인 |
-| 뇌 폴백 순서 | `config.json` `brain_chain` | `["claude","gjc","deepseek"]` — 접수가 이 순서로 생존 시도 |
-| 가리 말투·규칙·라우팅 | `templates/ask-prompt.txt` | 접수 페르소나. 마커 계약([깊은사고] 등)은 유지할 것 |
-| 사고의 깊이·방법론 | `templates/thinking-depth.md`, `thinking-lenses.txt` | 원전 교체·렌즈 추가 |
-| 증류 기준 (뭘 기억할까) | `templates/distill-prompt.txt` | 카드 타입·규칙. JSON 배열 계약 유지 |
-| 파견 실무자 규율 | `templates/do-prompt.txt` | 역할 경계·렌즈 점검 |
-| 멘토의 눈높이 | `templates/mentor-review.txt` + 북극성 문서 | 우선순위는 북극성에서 자동 상속 |
-| 지속 지시 | 채팅에 "앞으로 ~해줘" | `store/prefs.md`에 자동 축적 |
-| 수집 범위 | `config.json` `collect_all`/`denylist_paths` | |
-| 보고 시각·주기 | `config.json` + launchd plist | |
+| Swap models | `config.json` | `ask_model` (intake, memory, verification) / `ask_fallback_model` (wiki, general) / `deep_model` (judgment) / `distill_model` |
+| Use the Claude API directly | `secrets.env` | `ANTHROPIC_API_KEY=...`. Text-only calls go to the Messages API; tool calls go through Claude Code. `prefer_api: false` turns this off |
+| Track dollar cost | `config.json` `prices_per_mtok` | `{"haiku": [in, out], "sonnet": [in, out]}` in USD per million tokens. Tokens are logged either way |
+| Add another API brain | `config.json` `executors` | `{"name": {"type":"api","base_url":"...","key_env":"...","model":"..."}}` + the key in `secrets.env`. Check with `gari doctor` |
+| Brain fallback order | `config.json` `brain_chain` | e.g. `["claude", "deepseek"]` |
+| Gari's tone, rules, routing | `templates/ask-prompt.txt` | Keep the marker contract (`[DEEP]`, `[DELEGATE: …]`, …) — `gari.py` parses it |
+| Depth and methods of thinking | `templates/thinking-depth.md`, `thinking-lenses.txt` | Replace sources, add lenses |
+| What gets remembered | `templates/distill-prompt.txt` | Card types and rules. Keep the JSON-array contract |
+| Rules for delegated workers | `templates/do-prompt.txt` | Role boundary, lens check |
+| The mentor's bar | `templates/mentor-review.txt` + your north-star file | Priorities are inherited from `north_star_path` |
+| Standing instructions | Say "from now on, …" in chat | Collected automatically in `store/prefs.md` |
+| Name, form of address, language | `config.json` `user_name`, `honorific`, `language` | Filled into prompts via `{{USER}}`, `{{ADDRESS_RULE}}`, `{{LANG}}` |
+| Collection scope | `config.json` `collect_all` / `allowlist_paths` / `denylist_paths` | |
+| Project nicknames | `config.json` `project_aliases` | `{"jelly": "jellyfish"}` |
+| Report time and intervals | `config.json`, then `gari init` | launchd jobs are regenerated from config |
 
-## 2. 코드 확장 지점 (gari.py — 함수 단위로 갈아끼우게 설계됨)
+## 2. Code extension points (gari.py — designed to swap at the function level)
 
-| 층 | 진입 함수 | 확장 방법 |
+| Layer | Entry function | How to extend |
 |---|---|---|
-| 뇌 호출 | `run_brain()` → `run_claude()`/`run_api()` | 새 실행자 type은 `run_brain`의 분기 하나 추가 |
-| 비상 속하네스 | `run_agent_loop()` + `AGENT_TOOLS` | 도구 추가 = AGENT_TOOLS에 스키마 + `_agent_tool_exec`에 분기. **감옥(_jail)을 우회하는 도구 금지** |
-| 수집 어댑터 | `TOOL_ADAPTERS` 근방 (claude/codex/gjc 파서) | 새 CLI 수집 = 로그 위치 + 파서 함수 |
-| PM 상태머신 | `project_tick()` | 상태 추가 시 그래프 판정(`_ms_ready`)과 완주 판정 둘 다 갱신 |
-| 화면 문법 | `compose_stakes()` + `hud_data()` | 스테이크 재료 추가는 compose_stakes 재료 블록에 |
-| 학습 루프 | `compose_reflection()`(L1) `grade_feedback()`(L2) `log_miss()`(L3) `judge_nag()`(게이트) | 새 신호 = 로그 파일 + reflection 입력에 합류 |
-| 실측 | `collect_pulse()` | git 외 신호(CI·배포) 추가는 여기에 |
+| Brain calls | `run_brain()` → `run_claude()` / `run_anthropic()` / `run_api()` | A new executor type = one more branch in `run_brain` |
+| Emergency mini-harness | `run_agent_loop()` + `AGENT_TOOLS` | A new tool = schema in `AGENT_TOOLS` + branch in `_agent_tool_exec`. **No tool may bypass the jail (`_jail`)** |
+| Collection adapters | near `TOOL_ADAPTERS` (claude/codex/gjc parsers) | A new CLI = log location + parser function |
+| PM state machine | `project_tick()` | When adding a state, update both the graph check (`_ms_ready`) and the completion check |
+| Screen grammar | `compose_stakes()` + `hud_data()` | New stake material goes in compose_stakes' material block |
+| Learning loop | `compose_reflection()` (L1), `grade_feedback()` (L2), `log_miss()` (L3), `judge_nag()` (gate) | A new signal = a log file + feed it into reflection |
+| Measurements | `collect_pulse()` | Non-git signals (CI, deploys) go here |
+| Personalization | `personalize()` / `personalize_for_format()` | The single gateway for tokens |
 
-## 3. 불변 조항 (깨면 가리가 아님)
+## 3. Invariants (break these and it isn't Gari)
 
-- **원장 append-only** — 카드 삭제 금지, 정정·해소·그림자(읽기 시점 표식)로만 덮는다.
-- **fail-loud** — 실패를 폴백으로 숨기지 않는다. 폴백은 명시적 체인(brain_chain)뿐.
-- **검증 없는 완료 없음** — 파견은 실물 검수를 통과해야 done.
-- **자동 머지·푸시 없음** — 격리 브랜치까지만, 합류는 `gari merge`(사용자 지시).
-- **역할 경계** — 가리 프롬프트는 가리 안에만. 타 CLI 자동 주입 금지 (2026-07-08 확정).
-- **GARI_INTERNAL 표식** — 가리의 내부 뇌 호출에 항상 부착 (수집 재귀 방지).
-- **경로 감옥** — 비상 속하네스의 도구는 작업 폴더 밖을 못 만진다.
+- **Append-only ledger** — never delete cards; cover them with corrections, resolutions, or read-time shadows.
+- **Fail-loud** — never hide failures behind fallbacks. The only fallback is the explicit chain (`brain_chain`).
+- **No "done" without verification** — a delegation is done only after the real output passes a check.
+- **No auto-merge, no auto-push** — Gari stops at an isolated branch; merging is `gari merge` (user's call).
+- **Role boundary** — Gari's prompts stay inside Gari. Never auto-inject into other CLIs; the briefing is pull-only.
+- **GARI_INTERNAL marker** — always attached to Gari's internal brain calls (prevents recursive collection).
+- **Path jail** — emergency-harness tools can't touch anything outside the work folder.
+- **Markers and parsers change together** — `tests/test_offline.py` guards this.
 
-## 4. 재건 절차 (최악의 날)
+## 4. Rebuild procedure (the worst day)
 
-1. 이 레포 clone → `./install.sh` → `gari init` → `gari doctor`
-2. 검증: `python3 tests/journey.py` (여정 배터리 18 시나리오)
-3. 뇌가 없으면: config `brain_chain`에 살아있는 실행자를 넣고 `executors`에 API 키 등록 — 접수·증류·판단은 API 뇌로도 돌고, 파견 실무는 `run_agent_loop`(비상 속하네스)가 최소한을 받친다.
-4. 맥락 복원: `HANDOFF.md`(수리 이력) → `docs/premortem.md`(죽음 시나리오) → 북극성 문서(방향).
+1. Clone this repo → `./install.sh` → `gari init` → `gari doctor`
+2. Verify: `python3 tests/test_offline.py`
+3. If no brain responds: check `ANTHROPIC_API_KEY`, or put a live executor in `brain_chain` and register its key — intake, distillation, and judgment run on API brains; `run_agent_loop` keeps minimal delegation alive.
+4. Restore context: [NORTH-STAR.md](NORTH-STAR.md) (direction) → [premortem.md](premortem.md) (how Gari dies) → [INVENTORY.md](INVENTORY.md) (what exists).

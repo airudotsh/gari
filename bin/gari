@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""가리 실행 껍데기 — 본체는 GARI_HOME(기본 ~/gari)의 gari.py"""
+"""Gari launcher — the engine is gari.py in GARI_HOME (default: this repo)."""
 import os
 import sys
-sys.path.insert(0, os.environ.get("GARI_HOME", os.path.expanduser("~/gari")))
-import gari
+
+_here = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+os.environ.setdefault("GARI_HOME", _here)
+sys.path.insert(0, os.environ["GARI_HOME"])
+import gari  # noqa: E402
+
 sys.exit(gari.main())

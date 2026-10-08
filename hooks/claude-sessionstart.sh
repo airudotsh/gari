@@ -1,4 +1,5 @@
 #!/bin/sh
-# 가리 내부 뇌 호출에는 브리핑을 재귀 주입하지 않는다 (정체성 오염 방지)
+# Gari hook — resolves GARI_HOME from its own location.
 [ -n "$GARI_INTERNAL" ] && exit 0
-exec "$HOME/gari/bin/gari" brief 2>>"$HOME/gari/store/hook.err.log"
+GARI_HOME="${GARI_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+exec "$GARI_HOME/bin/gari" brief 2>>"$GARI_HOME/store/hook.err.log"

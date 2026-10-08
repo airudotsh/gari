@@ -1,92 +1,78 @@
-# 가리 (Gari) 🐠
+# Gari 🐠
 
 > **An agent for vibe coders — remembers, briefs, and meddles.**
 
 <p align="center">
-  <img src="docs/img/gari-pet.png" width="120" alt="가리 펫">
-  <img src="docs/img/gari-chat.png" width="300" alt="가리 대화창">
+  <img src="docs/img/gari-pet.png" width="120" alt="Gari, the pixel fish pet">
+  <img src="docs/img/gari-chat.png" width="300" alt="Gari's chat panel">
 </p>
 
-여러 AI CLI(Claude Code·Codex·gjc)와 병렬로 일하다 보면, 결정은 대화 속에서 내려지고 대화와 함께 증발한다.
-가리는 그 **사이**에 앉아 모든 대화를 듣고, 기억할 것만 남기고, 아침마다 브리핑하고, 놓친 게 보이면 참견하는 개인 에이전트다.
+When you work with several AI coding CLIs in parallel (Claude Code, Codex, …), real decisions get made *inside conversations* — and vanish when the session ends. The next session starts from zero, and you explain everything again.
 
-- **서버·데몬 없음** — 훅 + 예약 실행(launchd)만. 풋프린트 ~1MB
-- **데이터는 전부 로컬** — 원문 대화는 각 CLI 폴더에 그대로, 가리는 읽기만
-- **뇌는 렌탈** — 판단이 필요할 때만 Claude CLI를 1회용으로 소환 (하네스 교체 가능)
+Gari sits between those conversations. It reads them, keeps a ledger of **your decisions, open questions, and corrections** — sourced only from your own words — briefs you when you need it, and points out what you're missing.
 
-## 가리는 무엇인가 — 도구이기 전에 동료
+**North star: zero re-explaining.** Context you gave once should never have to be given again. → [docs/NORTH-STAR.md](docs/NORTH-STAR.md)
 
-가리는 기술의 결정체가 아니라 **관계의 축적물**로 설계됐다. 배는 갈아타도 항해일지와 항법은 가져간다 —
-가리의 정체는 앱·모델·화면(소모품)이 아니라, 사용자와 쌓은 **기억**(평문 카드·위키)과 **방법**(거울·질문·참견의 의식)이다.
-그래서 모델이 바뀌어도, 직업이 바뀌어도, 시대가 바뀌어도 가리는 이어진다: 교과서만 갈아끼우면 된다.
+## What it does
 
-밑에 깔린 계산은 이렇다: **실행 비용이 0으로 수렴하는 시대에 희소해지는 것은 판단이다.**
-가리는 판단의 복리 기계다 — 남들의 AI 대화는 매일 증발하지만, 가리의 사용자는 매일 축적한다.
-매일 아침 직업 이상향(시니어 프로덕트 리더의 눈) 기준의 리뷰를 받고, 시스템이 스스로 아는 무지(위키의 "미정의")가
-질문이 되어 사용자를 찾아온다. 업그레이드되는 것은 시스템이 아니라 사용자다.
-
-그리고 가리는 자신의 죽음을 미리 부검해뒀다 — [사전부검(premortem)](docs/premortem.md).
-결론 한 줄: **가리는 버그로 죽지 않는다, 잊혀서 죽는다.** 그래서 가리는 잊히기 시작하면 먼저 말을 건다.
-
-## 뭘 해주나
-
-| 층 | 내용 |
+| Layer | What happens |
 |---|---|
-| **기억** | 10분마다 모든 CLI 대화 → 카드(결정·미결·교정) 증류 → 프로젝트별 위키 자동 유지 |
-| **브리핑** | 어느 CLI를 열든 직전 결정·미결이 세션 시작에 자동 주입 — 재설명 제로 |
-| **아침 결재** | 매일 9시: 오늘의 한 칸 · 멘토 리뷰(시니어 PM 기준) · 큐 자동 정리 · 비용 결산 |
-| **대화·논의** | 펫 클릭 → 기억 질문(수 초), 웹 검색, 깊은 기획 논의(갈림길·트레이드오프·반문) |
-| **파견** | 대화에서 "~해줘" → "ㄱㄱ" 승인 → 백그라운드 구현 → 완료 알림 → 결과도 기억으로 |
-| **참견** | 디자인씽킹·PM 방법론 렌즈로 놓친 것을 매 답변·매 아침 짚음 («참견 —») |
+| **Remember** | Every 10 minutes, new CLI conversations → cards (decision · pending · correction · win) → a current-state wiki per project |
+| **Brief** | `gari brief` (or the session-start hook) gives recent decisions and open items — no re-explaining |
+| **Morning sign-off** | Each morning: today's one step, a mentor review, open items, things waiting for your OK |
+| **Ask** | Click the pet or run `gari ask` — memory answers in seconds, deep planning discussions, web search |
+| **Delegate** | Say "do …", approve with "go" → Gari hands it to a worker AI in an isolated branch, verifies the real output, reports back |
+| **Meddle** | Design-thinking and PM lenses catch what you're missing — every nudge is quality-gated before you see it |
 
-## 설치
+`gari northstar` shows whether it's working: re-explanations should go down, context handoffs should go up.
 
-전제: macOS + [Claude Code](https://claude.com/claude-code) 로그인.
+## Built on Claude
+
+Gari's brain is the **Claude API**. Put your key in `secrets.env` and every text-only step — distilling conversations, answering from memory, judging nudges, writing wikis, the morning review — goes straight to the Messages API. Model aliases (`haiku`, `sonnet`, `opus`) resolve to the newest matching model automatically.
+
+Steps that need tools (reading your repo, web search, delegated coding) run through [Claude Code](https://claude.com/claude-code), which uses the same key. Every call is metered in `store/usage.jsonl`; `gari cost` shows the spend.
+
+## Install
+
+Requirements: macOS, Python 3, Xcode Command Line Tools, a Claude API key from [console.anthropic.com](https://console.anthropic.com/). Claude Code is optional (needed for `gari do` and document search).
 
 ```sh
-git clone https://github.com/example-org/gari.git ~/gari
-cd ~/gari && ./install.sh    # 전제조건 검사 → 펫 빌드 → 온보딩(gari init) → 진단(gari doctor)
+git clone https://github.com/airudotsh/gari.git ~/gari
+cd ~/gari && ./install.sh
 ```
 
-첫 반나절이면 기억 질문이, 이틀째 아침이면 첫 보고가 온다. 문제가 생기면 `gari doctor`.
+The installer creates `config.json` and `secrets.env` (mode 600), builds the pet, and runs `gari init` (name, form of address, folders, report hour). Then add your key:
 
-## 명령
-
-`gari`(보고) · `ask`(대화) · `do`(파견) · `chat`(세션) · `triage`(큐 정리) · `snooze`(미결 재우기) ·
-`wiki`(프로젝트 위키) · `backfill`(과거 소급) · `resolve`(미결 완료) · `grade`(코치 채점) ·
-`log` · `brief` · `done` · `status` · `cost`(LLM 비용) · `doctor` · `init` · `pet`
-
-## 어떻게 깊이 생각하나
-
-깊이는 큰 모델이 아니라 **인코딩된 사고 과정**에서 나온다. 판단 질문이 들어오면:
-
-1. **레시피** — 방법론 원전(제1원칙·거꾸로 일하기·문의 종류·고용되는 일 등 11종, 절차·오용 경계 포함)을 쥐여주고 "가장 아픈 렌즈 1~3개만 적용"을 강제
-2. **재료** — 사용자의 카드(결정·미결 기록)와 이전 문답. 깊이는 일반론이 아니라 맥락에 붙을 때 생긴다
-3. **조리 순서** — 요지 재구성 → 사실 → 갈림길과 트레이드오프 → 추천+근거 → 논의를 전진시키는 반문 하나
-4. **장보기** — 기억이 얇으면 코드·문서를 직접 뒤지고(Read/Grep) 웹을 확인(WebSearch), 출처 표기
-5. **큰 불** — 판단 질문만 상위 모델로 라우팅 (필요조건일 뿐, 가장 작은 부분)
-6. **시간** — 심층 경로는 타임아웃·출력 상한을 넉넉히
-
-모델(5)은 갈아끼우는 부품이고 1–4는 시스템의 소유 — 그래서 모델이 바뀌어도 깊이는 남는다.
-
-## 구조
-
-```
-CLI들의 대화 원문 (읽기만)
-  → 10분 스윕 → 증류(haiku) → 카드 원장 (append-only)
-      → 위키 (프로젝트 현재 상태)     → 아침 보고 · 현황판 · 브리핑
-      → ask 라우팅: 기억(haiku) / 문서 수색 / 웹 검색·깊은 논의(sonnet)
-펫(네이티브 ObjC): 상태 표정 + 현황판(방향판·처리함) + 채팅 (md·링크·실시간 진행 중계)
+```sh
+echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/gari/secrets.env
+gari doctor
 ```
 
-원칙: 기록 없음 ≠ 진행 없음(수집 범위 자각) · 카드 근거는 사용자 발화만(오답 세탁 방지) ·
-가역은 가리가, 비가역은 사용자가 · 진행 표시는 연출이 아니라 실제 도구 활동 스트리밍.
+Keep working as usual. Memory answers start within half a day; the first morning report arrives on day two.
 
-## 상태
+## Commands
 
-v1.1 — 제작자 1인 시범 운용 중. 팀 배포판(온보딩 일반화)과 이미지 첨부는 트랙 진행 중.
-자세한 시스템 지도는 [HANDOFF.md](HANDOFF.md), 설치 풋프린트·능력 전체는 [docs/INVENTORY.md](docs/INVENTORY.md).
+`gari` (latest report) · `ask` · `do` · `brief` · `northstar` · `status` · `doctor` · `init` · `log` · `resolve` · `snooze` · `triage` · `grade` · `chat` · `weekly` · `cost` · `pulse` · `wiki` · `project` · `merge` · `cron` · `skill` · `event` · `dash` · `pet` · `backfill`
 
-## 크레딧
+## Privacy
 
-- 펫 스프라이트 원화: "Cute Fish Sprites" by **chips8688** — [OpenGameArt, OGA-BY 3.0](https://opengameart.org/) (색·구성 변형)
+- Everything lives in one folder (Gari's home). No server, no daemon, no telemetry.
+- Original conversations stay in each CLI's own folder; Gari only reads them and remembers how far it has read.
+- The only data that leaves your Mac is model calls — to the Claude API, with your key.
+- `allowlist_paths` / `denylist_paths` in `config.json` decide which projects are collected.
+
+## Docs
+
+- [NORTH-STAR.md](docs/NORTH-STAR.md) — the problem, the metric, the guardrails
+- [INVENTORY.md](docs/INVENTORY.md) — what gets installed and what it can do
+- [ARCHITECTURE.md](docs/ARCHITECTURE.md) — where to change what
+- [premortem.md](docs/premortem.md) — how Gari could die, and the defenses
+
+## Status
+
+Early. Used daily by its author since July 2026. Offline tests: `python3 tests/test_offline.py`.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+Pet sprite: "Cute Fish Sprites" by **chips8688** ([OpenGameArt](https://opengameart.org/content/cute-fish-sprites)), OGA-BY 3.0, modified (colors/composition). The artwork is not covered by the MIT license.

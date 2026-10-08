@@ -1,8 +1,8 @@
-// GariPet v0.3 — 가리의 몸. 화면에 상주하는 픽셀 펫 (살아있음 + 인터랙티브).
-// 원칙: 무드는 실제 상태만 표시 (자는 모습 = 진짜 유휴). 잔동작은 장식이되 상태를 속이지 않는다.
-// 본체와 분리: 이 앱이 죽어도 가리(수집·증류·보고)는 무사하다.
-// 빌드: clang -fobjc-arc -framework Cocoa -O2 -o gari-pet GariPet.m
-// 자가 스냅샷: ./gari-pet --snapshot <출력폴더>   (무드별 PNG 렌더 후 종료 — 시각 검증용)
+// GariPet v0.3 — Gari's body. A pixel pet that lives on screen (alive + interactive).
+// Principle: the mood shows only real state (sleeping = actually idle). Idle animations are decoration but never lie about state.
+// Separate from the engine: if this app dies, Gari (collection, distillation, reports) keeps running.
+// Build: clang -fobjc-arc -framework Cocoa -O2 -o gari-pet GariPet.m
+// Self-snapshot: ./gari-pet --snapshot <output-folder>   (renders a PNG per mood, then exits — for visual checks)
 #import <Cocoa/Cocoa.h>
 #import <sys/file.h>
 
@@ -13,11 +13,11 @@
 
 typedef NS_ENUM(int, GariMood) { MoodSleep, MoodAwake, MoodWork, MoodAlert };
 
-// ---------------------------------------------------------------- 몸 (레이어 1: 손도트 시트)
-// 가리 = 가리발디 물고기. 레퍼런스 도트 문법: 3톤 음영 + 등지느러미 + 두 갈래 꼬리 + 가슴지느러미.
-// D=진한 주황(등·지느러미 그늘) B=몸통 주황(쨍) H=배·볼(복숭아빛). 눈은 코드가 그린다(깜빡임·시선).
-// 스프라이트: "Cute Fish Sprites" by chips8688 — https://opengameart.org/content/cute-fish-sprites
-// 라이선스 OGA-BY 3.0 (출처 표기). 주황 변형 idle 1프레임을 격자로 이식 (눈은 코드 애니메이션으로 치환).
+// ---------------------------------------------------------------- body (layer 1: hand-dotted sheet)
+// Gari = a Garibaldi fish. Reference dot grammar: 3-tone shading + dorsal fin + forked tail + pectoral fin.
+// D = deep orange (back/fin shade) B = body orange (vivid) H = belly/cheek (peach). The eyes are drawn in code (blinking, gaze).
+// Sprite: "Cute Fish Sprites" by chips8688 — https://opengameart.org/content/cute-fish-sprites
+// License OGA-BY 3.0 (attribution). One orange-variant idle frame ported to the grid (eyes replaced by code animation).
 static NSString *BODY[BROWS] = {
     @"......AA.....",
     @"..AAAABBA....",
@@ -31,7 +31,7 @@ static NSString *BODY[BROWS] = {
     @"......AAA....",
 };
 
-static NSColor *gBodyColor, *gShadeColor, *gBellyColor;   // 팔레트 (pet-config.json으로 교체 가능)
+static NSColor *gBodyColor, *gShadeColor, *gBellyColor;   // palette (replaceable via pet-config.json)
 
 static NSColor *hexColor(NSString *hex, NSColor *fallback) {
     if (![hex isKindOfClass:NSString.class]) return fallback;
@@ -45,9 +45,9 @@ static NSColor *hexColor(NSString *hex, NSColor *fallback) {
 }
 
 static void initPalette(NSDictionary *cfg) {
-    NSColor *fallback = [NSColor colorWithCalibratedRed:1.000 green:0.400 blue:0.000 alpha:1]; // 가리발디 주황
+    NSColor *fallback = [NSColor colorWithCalibratedRed:1.000 green:0.400 blue:0.000 alpha:1]; // Garibaldi orange
     gBodyColor = hexColor(cfg[@"body_color"], fallback);
-    // 음영·배는 몸 색에서 파생 (가리발디 비율: 채도 -14%/-22%, 색상 +5°/+9°)
+    // shade and belly are derived from the body color (Garibaldi ratios: saturation -14%/-22%, hue +5°/+9°)
     NSColor *hsb = [gBodyColor colorUsingColorSpace:NSColorSpace.genericRGBColorSpace];
     CGFloat h, s, b, a;
     [hsb getHue:&h saturation:&s brightness:&b alpha:&a];
@@ -63,14 +63,14 @@ static NSColor *fishCellColor(int c, int y) {
     if (y < 0 || y >= BROWS || c < 0 || c >= BCOLS) return nil;
     unichar ch = [BODY[y] characterAtIndex:c];
     switch (ch) {
-        case 'A': case 'B': case 'E': return gBodyColor;   // 몸
-        case 'C': return gShadeColor;                       // 음영
-        case 'D': return gBellyColor;                       // 밝은 배
+        case 'A': case 'B': case 'E': return gBodyColor;   // body
+        case 'C': return gShadeColor;                       // shade
+        case 'D': return gBellyColor;                       // light belly
         default:  return nil;
     }
 }
 
-// 공식 Codex Pets 아틀라스 규격 — 스킨 장착 시
+// Official Codex Pets atlas spec — when a skin is equipped
 #define SHEET_COLS 8
 #define SHEET_CELL_W 192.0
 #define SHEET_CELL_H 208.0
@@ -79,7 +79,7 @@ static int sheetRowFor(GariMood m) {
                  case MoodAlert: return 5; default: return 0; }
 }
 
-// ---------------------------------------------------------------- 상태 읽기 (가리 실제 상태)
+// ---------------------------------------------------------------- state reading (Gari's real state)
 
 @interface GariStateReader : NSObject
 + (NSString *)gariPath:(NSString *)rel;
@@ -88,8 +88,9 @@ static int sheetRowFor(GariMood m) {
 
 @implementation GariStateReader
 + (NSString *)gariPath:(NSString *)rel {
-    return [[NSHomeDirectory() stringByAppendingPathComponent:@"gari"]
-            stringByAppendingPathComponent:rel];
+    NSString *home = NSProcessInfo.processInfo.environment[@"GARI_HOME"];
+    if (home.length == 0) home = [NSHomeDirectory() stringByAppendingPathComponent:@"gari"];
+    return [home stringByAppendingPathComponent:rel];
 }
 + (void)read:(GariMood *)mood badge:(int *)badge {
     NSFileManager *fm = NSFileManager.defaultManager;
@@ -120,7 +121,7 @@ static int sheetRowFor(GariMood m) {
 }
 @end
 
-// ---------------------------------------------------------------- 하트 파티클
+// ---------------------------------------------------------------- heart particles
 
 @interface Heart : NSObject
 @property CGFloat x, y, vy, life;
@@ -132,15 +133,15 @@ static int sheetRowFor(GariMood m) {
 @end
 @implementation AmbientBubble @end
 
-// 테두리 없는 패널이 키보드 입력을 받으려면 필요. ESC = 닫기 (팝오버 표준).
+// A borderless panel needs this to receive keyboard input. ESC = close (popover standard).
 @interface KeyableWindow : NSWindow
 @end
 @implementation KeyableWindow
-// 메뉴바 없는 앱의 표준 편집 단축키 복원 — ⌘C/V/X/A/Z가 퍼스트리스폰더로 흐르게
+// Restore standard editing shortcuts for an app without a menu bar — ⌘C/V/X/A/Z flow to the first responder
 - (BOOL)performKeyEquivalent:(NSEvent *)e {
     if (e.modifierFlags & NSEventModifierFlagCommand) {
-        // 물리 키코드로 판별 — 한글 자판에서는 ⌘V의 charactersIgnoringModifiers가
-        // "v"가 아니라 "ㅍ"로 와서 문자 비교가 통째로 빗나간다 (영문 자판에서만 통과)
+        // Decide by physical key code — on non-Latin keyboard layouts, ⌘V's charactersIgnoringModifiers
+        // arrives as a different character instead of "v", so character comparison misses entirely (passes only on Latin layouts)
         SEL sel = NULL;
         switch (e.keyCode) {
             case 8: sel = @selector(copy:); break;       // C
@@ -164,14 +165,14 @@ static int sheetRowFor(GariMood m) {
 }
 @end
 
-// 위→아래로 쌓는 컨테이너 (수동 레이아웃용)
+// Container that stacks top → bottom (for manual layout)
 @interface FlippedView : NSView
 @end
 @implementation FlippedView
 - (BOOL)isFlipped { return YES; }
 @end
 
-// ---- 패널 UI 헬퍼 (라벨·행 카드) ----
+// ---- panel UI helpers (labels, row cards) ----
 
 static NSAttributedString *mdRender(NSString *text, CGFloat size, NSColor *color) {
     NSMutableAttributedString *out = [NSMutableAttributedString new];
@@ -182,23 +183,23 @@ static NSAttributedString *mdRender(NSString *text, CGFloat size, NSColor *color
     NSColor *codeBg = [NSColor colorWithCalibratedWhite:0 alpha:0.30];
     NSColor *accent = [NSColor colorWithCalibratedRed:1.00 green:0.58 blue:0.22 alpha:1];
     NSMutableParagraphStyle *para = [NSMutableParagraphStyle new];
-    para.lineSpacing = 5.5;               // 한글 장문 기준 실질 행간 ~1.55 (ChatGPT/Claude 관행 참조)
-    para.paragraphSpacing = 9;            // 문단 사이 호흡 (빈 줄은 상자가 아니라 이 여백으로 흡수)
+    para.lineSpacing = 5.5;               // effective line height ~1.55 for long text (following ChatGPT/Claude practice)
+    para.paragraphSpacing = 9;            // breathing room between paragraphs (blank lines become this spacing, not boxes)
     NSMutableParagraphStyle *headPara = [para mutableCopy];
-    headPara.paragraphSpacingBefore = 13; // 제목: 위와는 멀게
-    headPara.paragraphSpacing = 5;        // 아래 본문에는 붙게 (근접성)
+    headPara.paragraphSpacingBefore = 13; // headings: far from what's above
+    headPara.paragraphSpacing = 5;        // close to the body below (proximity)
     NSMutableParagraphStyle *bulletPara = [para mutableCopy];
-    bulletPara.headIndent = 14;           // 행잉 인덴트 (줄바꿈이 글머리 밑으로 안 들어감)
-    bulletPara.paragraphSpacing = 5;      // 목록끼리는 촘촘하게 (문단 9보다 좁게)
+    bulletPara.headIndent = 14;           // hanging indent (wrapped lines don't slip under the bullet)
+    bulletPara.paragraphSpacing = 5;      // list items tighter (narrower than the paragraph 9)
     NSMutableParagraphStyle *quipPara = [para mutableCopy];
-    quipPara.paragraphSpacingBefore = 10; // 참견 줄은 본문과 호흡 분리
+    quipPara.paragraphSpacingBefore = 10; // the nudge line gets its own breathing room from the body
     BOOL inCode = NO;
     NSArray *lines = [text componentsSeparatedByString:@"\n"];
     for (NSUInteger li = 0; li < lines.count; li++) {
         NSString *line = lines[li];
-        if ([line hasPrefix:@"```"]) { inCode = !inCode; continue; }   // 펜스 줄은 표시 안 함
+        if ([line hasPrefix:@"```"]) { inCode = !inCode; continue; }   // fence lines are not shown
         if (!inCode && ![[line stringByTrimmingCharactersInSet:
-                NSCharacterSet.whitespaceCharacterSet] length]) continue;   // 빈 줄 상자 금지
+                NSCharacterSet.whitespaceCharacterSet] length]) continue;   // no boxes for blank lines
         NSFont *lineFont = base;
         NSParagraphStyle *linePara = para;
         NSColor *lineColor = color;
@@ -222,10 +223,10 @@ static NSAttributedString *mdRender(NSString *text, CGFloat size, NSColor *color
                              NSForegroundColorAttributeName: [lineColor colorWithAlphaComponent:0.45],
                              NSParagraphStyleAttributeName: bulletPara}]];
         }
-        if ([line containsString:@"«참견"] || [line hasPrefix:@"참견 —"]) {
-            lineColor = accent;                       // 색 + 여백이 곧 참견 표기 — 라벨 불필요
+        if ([line rangeOfString:@"«nudge" options:NSCaseInsensitiveSearch].location != NSNotFound || [line hasPrefix:@"Nudge —"] || [line containsString:@"«참견"] || [line hasPrefix:@"참견 —"]) {
+            lineColor = accent;                       // color + spacing is the nudge marker — no label needed
             linePara = quipPara;
-            NSRange r = [line rangeOfString:@"참견"];
+            NSRange r = [line rangeOfString:@"nudge" options:NSCaseInsensitiveSearch]; if (r.location == NSNotFound) r = [line rangeOfString:@"참견"];
             line = [line substringFromIndex:NSMaxRange(r)];
             line = [line stringByTrimmingCharactersInSet:
                 [NSCharacterSet characterSetWithCharactersInString:@" —–-:«»"]];
@@ -233,7 +234,7 @@ static NSAttributedString *mdRender(NSString *text, CGFloat size, NSColor *color
         NSArray *codeParts = [line componentsSeparatedByString:@"`"];
         for (NSUInteger ci = 0; ci < codeParts.count; ci++) {
             if (![codeParts[ci] length]) continue;
-            if (ci % 2 == 1) {   // `인라인 코드` — 배경칠은 줄바꿈에서 번져서 금지, 모노+밝기로만
+            if (ci % 2 == 1) {   // `inline code` — no background fill (bleeds across wraps), mono + brightness only
                 [out appendAttributedString:[[NSAttributedString alloc] initWithString:codeParts[ci]
                     attributes:@{NSFontAttributeName: mono,
                                  NSForegroundColorAttributeName: [NSColor colorWithCalibratedWhite:1.0 alpha:0.99],
@@ -285,10 +286,10 @@ static NSTextField *hudLabel(NSString *text, NSFont *font, NSColor *color,
     l.textColor = color;
     l.selectable = NO;
     l.maximumNumberOfLines = maxLines;
-    l.cell.truncatesLastVisibleLine = (maxLines > 0);   // 무제한 라벨은 절대 말줄임 금지
+    l.cell.truncatesLastVisibleLine = (maxLines > 0);   // unlimited labels never truncate
     l.preferredMaxLayoutWidth = width;
     l.frame = NSMakeRect(0, 0, width, 10);
-    CGFloat h = ceil([l.cell cellSizeForBounds:NSMakeRect(0, 0, width, 20000)].height);  // 셀 실측
+    CGFloat h = ceil([l.cell cellSizeForBounds:NSMakeRect(0, 0, width, 20000)].height);  // measured from the cell
     CGFloat lineH = ceil(font.ascender - font.descender + font.leading) + 2;
     if (maxLines > 0) h = MIN(h, lineH * maxLines);
     l.frame = NSMakeRect(0, 0, width, h + 2);
@@ -303,7 +304,7 @@ static NSView *hudRowCard(CGFloat width) {
     return row;
 }
 
-// ---------------------------------------------------------------- 펫 뷰
+// ---------------------------------------------------------------- pet view
 
 @class ResizeGrip;
 
@@ -313,44 +314,44 @@ static NSView *hudRowCard(CGFloat width) {
 @property long tick;
 @property (strong) NSImage *sheet;
 @property (strong) NSDate *moodChangedAt;
-@property (strong) NSDate *happyUntil;      // 쓰다듬 반응 창 (표정)
+@property (strong) NSDate *happyUntil;      // petting reaction window (expression)
 @property (strong) NSString *bubbleOverride;
-@property (strong) NSDate *bubbleUntil;     // 말풍선 유지 시한 (표정과 분리)
-@property (strong) NSString *lastBubbleLine; // 같은 대사 연속 방지
+@property (strong) NSDate *bubbleUntil;     // speech bubble expiry (separate from expression)
+@property (strong) NSString *lastBubbleLine; // avoid repeating the same line
 @property (strong) NSMutableArray<Heart *> *hearts;
 @property (strong) NSMutableArray<AmbientBubble *> *ambient;
 @property int bubbleCountdown;
-// 살아있음 엔진
+// aliveness engine
 @property CGFloat breathPhase;
 @property int blinkCountdown, blinkFrames;
 @property CGFloat hopY, hopV;
-@property NSPoint lookVec;                  // 눈동자 방향 (-1..1)
+@property NSPoint lookVec;                  // pupil direction (-1..1)
 @property BOOL mouseInside;
 @property int glanceCountdown;
 @property NSPoint dragOffset;
 @property BOOL dragged;
-@property BOOL mouseIsDown;      // 드래그 중 클릭통과 토글 금지
+@property BOOL mouseIsDown;      // no click-through toggling while dragging
 @property BOOL cursorPushed;
-@property NSPoint lookTarget;    // 두리번 목표 (lookVec이 이쪽으로 보간)
-@property (strong) NSWindow *hudWindow;     // 현황판 — 클릭으로 토글
-@property (strong) NSScrollView *hudScroll; // 콘텐츠 (JSON → 네이티브 행)
-@property (strong) NSTextView *hudInput;    // 패널 하단 질문창 (다중행 성장)
+@property NSPoint lookTarget;    // glance target (lookVec interpolates toward it)
+@property (strong) NSWindow *hudWindow;     // dashboard — toggled by click
+@property (strong) NSScrollView *hudScroll; // content (JSON → native rows)
+@property (strong) NSTextView *hudInput;    // question box at the bottom of the panel (grows to multiple lines)
 @property (strong) NSScrollView *hudInputScroll;
 @property (strong) NSTextField *hudPlaceholder;
-@property (strong) NSTextField *headerSub;  // 헤더 상태 줄
+@property (strong) NSTextField *headerSub;  // header status line
 @property (strong) NSTextField *headerTime;
-@property (strong) NSView *headerDot;       // 파이프라인 상태 점
+@property (strong) NSView *headerDot;       // pipeline status dot
 @property (strong) NSDictionary *hudData;   // gari hud --json
-@property int hudMode;                       // 0=현황판 1=대화
-@property BOOL showAllPendings;              // 처리함 "그 외" 펼침
-@property BOOL showRecords;                  // 오늘 기록 펼침
-@property BOOL showSuggestions;              // 가리 정리 제안 펼침
-@property BOOL showWorkItems;                // 실무급 미결 펼침
-@property BOOL showDetail;                   // 스테이크 아래 상세(기존 화면) 펼침
-@property int wiggleFrames;                  // 씰룩 남은 프레임
-@property int glideFrames;                   // 유영 남은 프레임
-@property CGFloat rubAccum;                  // 부비부비 게이지
-@property NSInteger lastThreadCount;         // 페이드인 판정용
+@property int hudMode;                       // 0 = dashboard, 1 = chat
+@property BOOL showAllPendings;              // inbox "others" expanded
+@property BOOL showRecords;                  // today's log expanded
+@property BOOL showSuggestions;              // Gari's tidy-up suggestions expanded
+@property BOOL showWorkItems;                // work-type pendings expanded
+@property BOOL showDetail;                   // details under the stakes (the older full view) expanded
+@property int wiggleFrames;                  // wiggle frames left
+@property int glideFrames;                   // glide frames left
+@property CGFloat rubAccum;                  // rubbing gauge
+@property NSInteger lastThreadCount;         // for deciding fade-in
 @property (strong) NSButton *tabA, *tabB;
 @property (strong) NSView *tabLine;
 @property (strong) NSPopUpButton *chatPopup;
@@ -360,7 +361,7 @@ static NSView *hudRowCard(CGFloat width) {
 @property (strong) NSTimer *askTimer;
 @property (strong) NSString *lastAskStatus;
 @property (strong) ResizeGrip *hudGrip;
-@property (strong) NSString *lastQ, *lastA; // 마지막 문답
+@property (strong) NSString *lastQ, *lastA; // last Q&A
 @property BOOL asking;
 @end
 
@@ -371,13 +372,13 @@ static NSView *hudRowCard(CGFloat width) {
 - (void)paste:(id)sender {
     NSPasteboard *pb = NSPasteboard.generalPasteboard;
     NSImage *img = nil;
-    // 파일 복사(피인더) 우선, 그다음 화면캡처류 비트맵
+    // file copies (Finder) first, then screenshot-style bitmaps
     NSArray *urls = [pb readObjectsForClasses:@[NSURL.class]
                                       options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
     for (NSURL *u in urls) {
         NSString *ext = u.pathExtension.lowercaseString;
         if ([@[@"png", @"jpg", @"jpeg", @"gif", @"webp"] containsObject:ext]) {
-            [self insertText:[NSString stringWithFormat:@"[첨부: %@] ", u.path]
+            [self insertText:[NSString stringWithFormat:@"[ATTACH: %@] ", u.path]
             replacementRange:self.selectedRange];
             return;
         }
@@ -394,7 +395,7 @@ static NSView *hudRowCard(CGFloat width) {
         [NSFileManager.defaultManager createDirectoryAtPath:path.stringByDeletingLastPathComponent
             withIntermediateDirectories:YES attributes:nil error:nil];
         if ([png writeToFile:path atomically:YES]) {
-            [self insertText:[NSString stringWithFormat:@"[첨부: %@] ", path]
+            [self insertText:[NSString stringWithFormat:@"[ATTACH: %@] ", path]
             replacementRange:self.selectedRange];
             return;
         }
@@ -415,7 +416,7 @@ static NSView *hudRowCard(CGFloat width) {
     NSBezierPath *ln = [NSBezierPath bezierPath];
     ln.lineWidth = 1.2;
     CGFloat W = self.bounds.size.width, m = 3;
-    for (int i = 0; i < 3; i++) {   // 우하단 대각선 3줄 — 표준 리사이즈 그립
+    for (int i = 0; i < 3; i++) {   // 3 diagonal lines at bottom-right — the standard resize grip
         CGFloat off = 3 + i * 3.5;
         [ln moveToPoint:NSMakePoint(W - m - off, m)];
         [ln lineToPoint:NSMakePoint(W - m, m + off)];
@@ -439,7 +440,7 @@ static NSView *hudRowCard(CGFloat width) {
 - (void)mouseDragged:(NSEvent *)e {
     NSPoint cur = NSEvent.mouseLocation;
     CGFloat dw = cur.x - self.startMouse.x;
-    CGFloat dh = self.startMouse.y - cur.y;   // 아래로 끌면 커짐
+    CGFloat dh = self.startMouse.y - cur.y;   // dragging down makes it bigger
     NSRect f = self.startFrame;
     CGFloat w = MAX(380, MIN(1000, f.size.width + dw));
     CGFloat h = MAX(430, MIN(NSScreen.mainScreen.visibleFrame.size.height, f.size.height + dh));
@@ -470,7 +471,7 @@ static NSView *hudRowCard(CGFloat width) {
 
 - (BOOL)isHappy { return self.happyUntil && [self.happyUntil timeIntervalSinceNow] > 0; }
 
-// 물고기 몸 위인가 (관대한 히트 영역 — 몸 타원 + 꼬리, 여유 6px)
+// Is the point on the fish's body? (generous hit area — body ellipse + tail, 6px slack)
 - (BOOL)pointOverFish:(NSPoint)viewPt {
     CGFloat ox = (self.bounds.size.width - BCOLS * CELL) / 2;
     CGFloat oyBase = 16;
@@ -479,13 +480,13 @@ static NSView *hudRowCard(CGFloat width) {
     int y = BROWS - 1 - rBottom;
     for (int dy = -1; dy <= 1; dy++)
         for (int dx = -1; dx <= 1; dx++)
-            if (fishCellColor(c + dx, y + dy)) return YES;   // 1셀 여유
+            if (fishCellColor(c + dx, y + dy)) return YES;   // 1-cell slack
     return NO;
 }
 
-// 클릭 통과: 커서가 물고기 위일 때만 창이 마우스를 받는다 (틱마다 저비용 판정)
+// Click-through: the window takes the mouse only when the cursor is over the fish (cheap check every tick)
 - (void)updateClickThrough {
-    if (self.mouseIsDown) return;   // 드래그 중엔 유지
+    if (self.mouseIsDown) return;   // keep while dragging
     NSPoint mouse = [NSEvent mouseLocation];
     NSRect wf = self.window.frame;
     BOOL over = NO;
@@ -497,48 +498,48 @@ static NSView *hudRowCard(CGFloat width) {
     else if (!over && self.cursorPushed) { [NSCursor pop]; self.cursorPushed = NO; }
 }
 
-// 다음 틱 간격 — 활동 없으면 느리게 (RunCat식 상시 고빈도 웨이크업 회피)
+// Next tick interval — slow when inactive (avoids RunCat-style constant high-frequency wakeups)
 - (NSTimeInterval)desiredTickInterval {
-    if (!self.window.isVisible) return 2.0;                      // 숨김 중
+    if (!self.window.isVisible) return 2.0;                      // hidden
     BOOL active = (self.mood != MoodSleep) || self.hearts.count > 0
                   || self.ambient.count > 0
                   || self.hopY > 0 || self.bubbleOverride != nil
                   || self.mouseInside;
-    return active ? 0.12 : 0.45;                                 // 잘 때 숨쉬기는 2fps면 족함
+    return active ? 0.12 : 0.45;                                 // 2fps is enough for breathing while asleep
 }
 
-// ---------------- 살아있음 틱 (적응형)
+// ---------------- aliveness tick (adaptive)
 - (void)animTick {
     self.tick += 1;
     [self updateClickThrough];
     self.breathPhase += 0.14;
-    // 깜빡임 (잘 땐 안 함) — 1프레임만, 간격 넉넉히: "눈이 사라졌다 나온다" 체감 방지
+    // Blink (not while asleep) — one frame only, spaced generously: avoids the "eyes vanish and come back" feel
     if (self.mood != MoodSleep) {
         if (self.blinkFrames > 0) self.blinkFrames -= 1;
         else if (--self.blinkCountdown <= 0) {
             self.blinkFrames = 1;
-            self.blinkCountdown = 50 + arc4random_uniform(60);   // 6~13초에 한 번
+            self.blinkCountdown = 50 + arc4random_uniform(60);   // once every 6–13 s
         }
     }
-    // 깡총 물리
+    // hop physics
     if (self.hopV != 0 || self.hopY > 0) {
         self.hopY += self.hopV; self.hopV -= 1.6;
         if (self.hopY <= 0) { self.hopY = 0; self.hopV = 0; }
     } else if (self.mood == MoodWork && self.tick % 10 == 0) {
-        self.hopV = 4.2;   // 일할 땐 통통거림
+        self.hopV = 4.2;   // bouncy while working
     } else if (self.mood == MoodAwake && arc4random_uniform(90) == 0) {
-        self.hopV = 5.0;   // 가끔 신나서 한 번
+        self.hopV = 5.0;   // an occasional excited hop
     }
-    // 씰룩 — 깨어 있을 때 이따금 (자세 고쳐 앉기)
+    // Wiggle — now and then while awake (settling into position)
     if (self.wiggleFrames > 0) self.wiggleFrames -= 1;
     else if (self.mood == MoodAwake && self.hopY == 0 && arc4random_uniform(150) == 0)
         self.wiggleFrames = 12;
-    // 유영 — 가끔 느긋하게 좌우로 한 바퀴 미끄러짐
+    // Glide — now and then, a lazy slide left and right
     if (self.glideFrames > 0) self.glideFrames -= 1;
     else if (self.mood == MoodAwake && self.hopY == 0 && arc4random_uniform(240) == 0)
         self.glideFrames = 70;
-    self.rubAccum *= 0.94;   // 부비 게이지는 천천히 식음
-    // 시선: 마우스 없으면 가끔 두리번 — 목표점으로 부드럽게 (순간이동 금지)
+    self.rubAccum *= 0.94;   // the rub gauge cools slowly
+    // Gaze: without a mouse, glance around now and then — smoothly toward a target (no teleporting)
     if (!self.mouseInside && self.mood != MoodSleep && --self.glanceCountdown <= 0) {
         self.lookTarget = NSMakePoint(((int)arc4random_uniform(3) - 1) * 0.8,
                                       ((int)arc4random_uniform(3) - 1) * 0.4);
@@ -548,12 +549,12 @@ static NSView *hudRowCard(CGFloat width) {
         self.lookVec = NSMakePoint(self.lookVec.x + (self.lookTarget.x - self.lookVec.x) * 0.25,
                                    self.lookVec.y + (self.lookTarget.y - self.lookVec.y) * 0.25);
     }
-    // 하트 부유
+    // floating hearts
     for (Heart *h in [self.hearts copy]) {
         h.y += h.vy; h.life -= 0.045;
         if (h.life <= 0) [self.hearts removeObject:h];
     }
-    // 물방울 앰비언트 — 사용자 지시로 비활성 (2026-07-06). 일할 때 기포(상태 신호)는 별도.
+    // Ambient water bubbles — disabled by user request. Working bubbles (a state signal) are separate.
     if (NO && --self.bubbleCountdown <= 0) {
         AmbientBubble *b = [AmbientBubble new];
         CGFloat ox = (self.bounds.size.width - BCOLS * CELL) / 2;
@@ -564,7 +565,7 @@ static NSView *hudRowCard(CGFloat width) {
         b.life = 1.0;
         b.wobble = arc4random_uniform(100) / 100.0 * 6.28;
         [self.ambient addObject:b];
-        self.bubbleCountdown = 34 + arc4random_uniform(56);   // 4~11초 간격
+        self.bubbleCountdown = 34 + arc4random_uniform(56);   // every 4–11 s
     }
     for (AmbientBubble *b in [self.ambient copy]) {
         b.y += b.vy;
@@ -576,7 +577,7 @@ static NSView *hudRowCard(CGFloat width) {
     self.needsDisplay = YES;
 }
 
-// ---------------- 그리기
+// ---------------- drawing
 - (void)drawRect:(NSRect)dirtyRect {
     CGFloat ox = (self.bounds.size.width - BCOLS * CELL) / 2
                + (self.wiggleFrames > 0 ? sin(self.wiggleFrames * 1.1) * 2.4 : 0)
@@ -598,12 +599,12 @@ static NSView *hudRowCard(CGFloat width) {
                 respectFlipped:YES hints:nil];
         spriteTop = NSMaxY(dst); spriteRight = NSMaxX(dst);
     } else {
-        // 물고기는 물에 떠 있다 — 부유(bob)가 숨쉬기를 겸한다
+        // The fish floats in water — bobbing doubles as breathing
         CGFloat bob = sin(self.breathPhase * (self.mood == MoodSleep ? 0.5 : 1.0))
                       * (self.mood == MoodSleep ? 1.5 : 2.5);
         oy += bob;
-        BOOL flipped = (self.mood == MoodAlert);   // 배관 이상 = 배 뒤집힌 물고기
-        // 꼬리 흔들기: 꼬리 열이 위아래로 (일할 땐 빠르게)
+        BOOL flipped = (self.mood == MoodAlert);   // pipeline problem = belly-up fish
+        // Tail wag: the tail columns move up and down (faster while working)
         long wagTick = self.mood == MoodWork ? self.tick : self.tick / 3;
         CGFloat wag = (wagTick % 2 == 0 ? 1 : -1) * (self.mood == MoodSleep ? 0 : 2);
         for (int r = 0; r < BROWS; r++) {
@@ -612,7 +613,7 @@ static NSView *hudRowCard(CGFloat width) {
                 NSColor *col = fishCellColor(c, logicalY);
                 if (!col) continue;
                 [col setFill];
-                // 정수 좌표로 스냅 — 소수점 오프셋이 만드는 픽셀 사이 줄무늬 방지
+                // snap to integer coordinates — fractional offsets cause stripes between pixels
                 CGFloat y = floor(oy + (BROWS - 1 - r) * CELL + (c >= 10 ? wag : 0));
                 NSRectFill(NSMakeRect(floor(ox + c * CELL), y, CELL, CELL));
             }
@@ -622,14 +623,14 @@ static NSView *hudRowCard(CGFloat width) {
         spriteRight = ox + BCOLS * CELL;
     }
 
-    // zzz (잘 때)
+    // zzz (asleep)
     if (self.mood == MoodSleep && (self.tick / 8) % 2 == 0) {
         NSString *z = (self.tick / 8) % 4 == 0 ? @"z" : @"zZ";
         [z drawAtPoint:NSMakePoint(spriteRight - 14, spriteTop + 2)
         withAttributes:@{NSFontAttributeName: [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightBold],
                          NSForegroundColorAttributeName: [NSColor colorWithCalibratedWhite:0.55 alpha:0.9]}];
     }
-    // 물방울 (테두리만 있는 작은 원 — 픽셀 감성)
+    // water bubbles (small outlined circles — pixel feel)
     for (AmbientBubble *b in self.ambient) {
         NSColor *bc = [NSColor colorWithCalibratedRed:0.55 green:0.80 blue:0.98
                                                 alpha:MAX(0, MIN(0.8, b.life))];
@@ -639,61 +640,61 @@ static NSView *hudRowCard(CGFloat width) {
         ring.lineWidth = 1.2;
         [ring stroke];
     }
-    // 하트
+    // heart
     for (Heart *h in self.hearts) [self drawHeartAt:NSMakePoint(h.x, h.y) alpha:h.life];
-    // 말풍선
+    // speech bubble
     if (self.bubbleOverride && self.bubbleUntil &&
         [self.bubbleUntil timeIntervalSinceNow] <= 0) self.bubbleOverride = nil;
     NSString *bubble = self.bubbleOverride;
     if (!bubble && self.moodChangedAt && [NSDate.date timeIntervalSinceDate:self.moodChangedAt] < 12.0) {
         switch (self.mood) {
-            case MoodWork:  bubble = @"정리 중…"; break;
-            case MoodAwake: bubble = @"형님, 보고 나왔습니다"; break;
-            case MoodAlert: bubble = @"배관 이상!"; break;
+            case MoodWork:  bubble = @"Tidying…"; break;
+            case MoodAwake: bubble = @"Report's ready"; break;
+            case MoodAlert: bubble = @"Pipeline problem!"; break;
             default: break;
         }
     }
     if (bubble) [self drawBubble:bubble top:spriteTop];
-    // 배지
-    // 배지 제거 (2026-07-06 사용자 지시) — 대기 건수는 현황판·무드 표정이 전달
+    // badge
+    // Badge removed (user request) — waiting counts are conveyed by the dashboard and the mood expression
     (void)spriteRight;
 }
 
-// 얼굴 (레이어 2: 코드 — 흰자 없는 작은 까만 눈. 깜빡임·시선은 코드가 담당)
+// Face (layer 2: code — small black eyes without whites. Blinking and gaze are handled in code)
 - (void)drawFaceAtX:(CGFloat)ox y:(CGFloat)oy flipped:(BOOL)flipped {
-    // 눈 자리 = 머리 위쪽 (rows 4..5, cols 3..4 — 세로 중앙이라 뒤집혀도 같은 자리).
+    // Eye position = upper head (rows 4..5, cols 3..4 — vertically centered, so the same spot when flipped).
     int eyeRowTop = 3;
-    CGFloat eyeY = oy + (BROWS - 1 - (eyeRowTop + 1)) * CELL - CELL * 0.5;   // 눈 영역 하단 y (반 칸 아래)
+    CGFloat eyeY = oy + (BROWS - 1 - (eyeRowTop + 1)) * CELL - CELL * 0.5;   // bottom y of the eye area (half a cell down)
     CGFloat ex = ox + 2.5 * CELL;
-    CGFloat eyeW = 1.2 * CELL;  // 아티스트 눈 = 세로 알약 (1x2셀)
+    CGFloat eyeW = 1.2 * CELL;  // the artist's eye = vertical pill (1x2 cells)
     (void)flipped;
     BOOL closed = (self.mood == MoodSleep) || self.blinkFrames > 0;
     BOOL happy = [self isHappy];
     NSColor *ink = [NSColor colorWithCalibratedWhite:0.10 alpha:1];
 
-    if (self.mood == MoodAlert) {  // X 눈 — 뒤집힌 물고기의 만국 공통 신호
+    if (self.mood == MoodAlert) {  // X eyes — the universal sign of a belly-up fish
         [ink setFill];
         for (int i = 0; i < 4; i++) {
             CGFloat d = i * CELL * 0.55;
             NSRectFill(NSMakeRect(ex + d, eyeY + d, CELL * 0.6, CELL * 0.6));
             NSRectFill(NSMakeRect(ex + CELL * 1.65 - d, eyeY + d, CELL * 0.6, CELL * 0.6));
         }
-    } else if (happy) {  // ∩ 웃는 눈
+    } else if (happy) {  // ∩ smiling eyes
         [ink setFill];
         NSRectFill(NSMakeRect(ex - CELL * 0.2, eyeY + CELL * 0.2, CELL * 0.7, CELL * 1.1));
         NSRectFill(NSMakeRect(ex + CELL * 0.5, eyeY + CELL * 1.0, CELL * 1.4, CELL * 0.7));
         NSRectFill(NSMakeRect(ex + CELL * 1.7, eyeY + CELL * 0.2, CELL * 0.7, CELL * 1.1));
-    } else if (closed) {  // 감은 눈 — 같은 자리 막대 (사라진 느낌 금지)
+    } else if (closed) {  // closed eyes — a bar in the same spot (never feels like they vanished)
         [ink setFill];
         NSRectFill(NSMakeRect(ex - CELL * 0.1, eyeY + CELL * 0.6, CELL * 2.4, CELL * 0.8));
-    } else {  // 까만 세로 알약 눈 — 시선 추적
+    } else {  // black vertical pill eyes — follow the gaze
         [ink setFill];
         NSRectFill(NSMakeRect(ex + self.lookVec.x * CELL * 0.3,
                               eyeY + CELL * 0.05 + self.lookVec.y * CELL * 0.3,
                               CELL * 1.1, CELL * 1.9));
     }
 
-    // 입 없음 — 일할 때만 머리 앞에서 기포가 뽀글 (상태 신호)
+    // No mouth — bubbles rise in front of the head only while working (a state signal)
     if (self.mood == MoodWork) {
         [[NSColor colorWithCalibratedRed:0.55 green:0.80 blue:0.98 alpha:0.85] setFill];
         int phase = (int)(self.tick % 12);
@@ -708,7 +709,7 @@ static NSView *hudRowCard(CGFloat width) {
 - (void)drawHeartAt:(NSPoint)p alpha:(CGFloat)a {
     NSColor *c = [NSColor colorWithCalibratedRed:0.95 green:0.42 blue:0.50 alpha:MAX(0, MIN(1, a))];
     [c setFill];
-    CGFloat s = 3.2;  // 픽셀 하트 (5x4)
+    CGFloat s = 3.2;  // pixel heart (5x4)
     int heart[4][5] = {{0,1,0,1,0},{1,1,1,1,1},{0,1,1,1,0},{0,0,1,0,0}};
     for (int r = 0; r < 4; r++)
         for (int col = 0; col < 5; col++)
@@ -721,14 +722,14 @@ static NSView *hudRowCard(CGFloat width) {
     NSSize ts = [text sizeWithAttributes:attrs];
     CGFloat bw = ts.width + 16, bh = ts.height + 8;
     CGFloat ox = (self.bounds.size.width - BCOLS * CELL) / 2;
-    CGFloat headX = ox + 4 * CELL;                     // 머리 위 앵커
+    CGFloat headX = ox + 4 * CELL;                     // anchor above the head
     CGFloat bx = MAX(4, MIN(headX - bw * 0.35, self.bounds.size.width - bw - 4));
     CGFloat by = MIN(spriteTop + 10, self.bounds.size.height - bh - 2);
     NSRect bub = NSMakeRect(bx, by, bw, bh);
     [[NSColor colorWithCalibratedWhite:0.98 alpha:0.96] setFill];
     [[NSBezierPath bezierPathWithRoundedRect:bub xRadius:8 yRadius:8] fill];
-    NSBezierPath *tail = [NSBezierPath bezierPath];    // 말풍선 꼬리
-    [tail moveToPoint:NSMakePoint(headX - 3, by + 2)];   // 몸통에 겹쳐 이음새 제거
+    NSBezierPath *tail = [NSBezierPath bezierPath];    // speech-bubble tail
+    [tail moveToPoint:NSMakePoint(headX - 3, by + 2)];   // overlap the body to hide the seam
     [tail lineToPoint:NSMakePoint(headX + 7, by + 2)];
     [tail lineToPoint:NSMakePoint(headX + 1, by - 6)];
     [tail closePath];
@@ -736,14 +737,14 @@ static NSView *hudRowCard(CGFloat width) {
     [text drawAtPoint:NSMakePoint(bx + 8, by + 4) withAttributes:attrs];
 }
 
-// ---------------- 인터랙션
+// ---------------- interaction
 - (void)mouseEntered:(NSEvent *)e { self.mouseInside = YES; }
 - (void)mouseExited:(NSEvent *)e { self.mouseInside = NO; self.lookVec = NSZeroPoint; }
 - (void)mouseMoved:(NSEvent *)e {
     NSPoint vp = [self convertPoint:e.locationInWindow fromView:nil];
     if ([self pointOverFish:vp]) {
         self.rubAccum += fabs(e.deltaX) + fabs(e.deltaY);
-        if (self.rubAccum > 90) {   // 부비부비 인정 — 좋아 죽음
+        if (self.rubAccum > 90) {   // rubbing acknowledged — overjoyed
             self.rubAccum = 0;
             for (int i = 0; i < 4; i++) {
                 Heart *h = [Heart new];
@@ -758,7 +759,7 @@ static NSView *hudRowCard(CGFloat width) {
             self.wiggleFrames = 14;
         }
     }
-    if (self.mood == MoodSleep) return;   // 자는 애는 시선 없음
+    if (self.mood == MoodSleep) return;   // a sleeping fish doesn't look around
     NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
     NSPoint center = NSMakePoint(NSMidX(self.bounds), NSMidY(self.bounds));
     CGFloat dx = (p.x - center.x) / (self.bounds.size.width / 2);
@@ -786,7 +787,7 @@ static NSView *hudRowCard(CGFloat width) {
         [d writeToFile:[GariStateReader gariPath:@"pet/position.json"] atomically:YES];
         return;
     }
-    // 싱글클릭 = 쓰다듬기 + 현황판 토글 (즉시 — 더블클릭 의미 없음, 지연 없음)
+    // Single click = pet + toggle the dashboard (instant — no double-click meaning, no delay)
     [self petting];
 }
 
@@ -801,36 +802,36 @@ static NSView *hudRowCard(CGFloat width) {
         h.life = 1.0;
         [self.hearts addObject:h];
     }
-    // 대사 풀: 기본 + 상황(결재·작업·시간대)별 가산 — 같은 말 연속 금지
+    // Line pool: defaults + extras per situation (sign-offs, work, time of day) — never the same line twice in a row
     NSMutableArray *lines = [@[
-        @"충성!", @"헤헤", @"형님 오셨습니까!", @"부르셨습니까!",
-        @"오늘도 듣고 있습니다", @"카드 쌓는 중입니다", @"기억은 제가 다 합니다",
-        @"뭐든 물어보십시오", @"참견할 준비 됐습니다", @"물 좋습니다, 형님",
-        @"지느러미 컨디션 최상입니다", @"가리발디의 명예를 걸고!",
-        @"형님 최고", @"꼬리 흔드는 중입니다", @"잊으신 거 있으면 제가 압니다"] mutableCopy];
+        @"Reporting for duty!", @"Hehe", @"Oh, you're here!", @"You called?",
+        @"Listening, as always", @"Stacking cards", @"I'll do the remembering",
+        @"Ask me anything", @"Ready to meddle", @"Water's nice today",
+        @"Fins in top condition", @"On my honor as a Garibaldi!",
+        @"You're the best", @"Wagging my tail", @"Forgot something? I didn't"] mutableCopy];
     if (self.badge > 0)
         [lines addObjectsFromArray:@[
-            @"형님! 현황판 대령입니다", @"충성! 결재 대기 중입니다",
-            @"결재함이 형님을 기다립니다", @"도장 찍을 게 몇 개 있습니다"]];
+            @"Dashboard, at your service", @"Things are waiting for your sign-off",
+            @"Your inbox misses you", @"A few things need a stamp"]];
     if (self.mood == MoodWork)
         [lines addObjectsFromArray:@[
-            @"작업 캐는 중입니다 — 불러주셨습니까!", @"바쁘지만 형님이 먼저죠",
-            @"기포 올라오는 거 보이시죠? 일하는 소리입니다"]];
+            @"Digging through work — you called?", @"Busy, but you come first",
+            @"See the bubbles? That's me working"]];
     NSInteger hour = [NSCalendar.currentCalendar component:NSCalendarUnitHour fromDate:NSDate.date];
     if (hour >= 23 || hour < 5)
         [lines addObjectsFromArray:@[
-            @"형님, 이 시간까지… 대단하십니다", @"저는 야행성이라 괜찮습니다",
-            @"새벽 물살이 조용하니 좋네요"]];
+            @"Still up at this hour… impressive", @"I'm nocturnal, no worries",
+            @"Quiet currents before dawn — nice"]];
     else if (hour >= 5 && hour < 10)
         [lines addObjectsFromArray:@[
-            @"좋은 아침입니다, 형님!", @"아침 보고 준비돼 있습니다", @"오늘의 한 칸부터 보시죠"]];
+            @"Good morning!", @"The morning report is ready", @"Start with today's one step"]];
     NSString *pick = lines[arc4random_uniform((uint32_t)lines.count)];
     if ([pick isEqualToString:self.lastBubbleLine] && lines.count > 1)
         pick = lines[arc4random_uniform((uint32_t)lines.count)];
     self.lastBubbleLine = pick;
     self.bubbleOverride = pick;
     self.bubbleUntil = [NSDate dateWithTimeIntervalSinceNow:2.5];
-    [self toggleHud];   // 클릭 = 쓰다듬기 + 현황판 (가리의 모든 것이 가리 안에서 보인다)
+    [self toggleHud];   // click = pet + dashboard (everything about Gari is visible inside Gari)
     self.needsDisplay = YES;
 }
 
@@ -844,7 +845,7 @@ static NSString *hudTimeShort(NSString *iso) {
     return [day isEqualToString:today] ? hm : [NSString stringWithFormat:@"%@ %@", [day substringFromIndex:5], hm];
 }
 
-// ---------------- 현황판 (HUD) — 보고·결재·미결·카드·상태를 펫 옆 패널로
+// ---------------- dashboard (HUD) — reports, sign-offs, pendings, cards, status in a panel next to the pet
 
 - (void)toggleHud {
     if (self.hudWindow && self.hudWindow.isVisible) {
@@ -854,7 +855,7 @@ static NSString *hudTimeShort(NSString *iso) {
     [self openHud];
 }
 
-// 패널 카드 조립 (창·스냅샷 공용) — 헤더 + 콘텐츠 스크롤 + 하단 질문 바
+// Assemble the panel card (shared by window and snapshot) — header + scrolling content + bottom question bar
 - (NSView *)makeHudCard:(NSSize)size {
     NSView *card = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, size.width, size.height)];
     card.wantsLayer = YES;
@@ -863,7 +864,7 @@ static NSString *hudTimeShort(NSString *iso) {
     card.layer.borderWidth = 1;
     card.layer.borderColor = [NSColor colorWithCalibratedWhite:1.0 alpha:0.10].CGColor;
 
-    // 뒤 배경 블러 (라이브) — 스냅샷/미지원 시에도 아래 틴트가 카드를 지탱
+    // Live background blur — the tint below holds the card up even in snapshots / where unsupported
     NSVisualEffectView *fx = [[NSVisualEffectView alloc]
         initWithFrame:NSMakeRect(0, 0, size.width, size.height)];
     fx.material = NSVisualEffectMaterialHUDWindow;
@@ -877,7 +878,7 @@ static NSString *hudTimeShort(NSString *iso) {
     tint.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     [card addSubview:tint];
 
-    // ---- 헤더 2단: ① 상태 한 줄 (점+요약+시각, 이름 없음 — 사용자 지시) ② 자체 탭 바 ----
+    // ---- two-tier header: (1) one status line (dot + summary + time, no name — user request) (2) our own tab bar ----
     CGFloat headerH = 68;
     NSView *dot = [[NSView alloc]
         initWithFrame:NSMakeRect(22, size.height - 25, 8, 8)];
@@ -887,7 +888,7 @@ static NSString *hudTimeShort(NSString *iso) {
     [card addSubview:dot];
     self.headerDot = dot;
 
-    NSTextField *sub = hudLabel(@"연결 중…", [NSFont systemFontOfSize:11.5 weight:NSFontWeightMedium],
+    NSTextField *sub = hudLabel(@"Connecting…", [NSFont systemFontOfSize:11.5 weight:NSFontWeightMedium],
                                 [NSColor colorWithCalibratedWhite:0.70 alpha:1], 1, size.width - 44 - 66);
     sub.frame = NSMakeRect(38, size.height - 30, size.width - 44 - 66, 16);
     [card addSubview:sub];
@@ -900,16 +901,16 @@ static NSString *hudTimeShort(NSString *iso) {
     [card addSubview:time];
     self.headerTime = time;
 
-    // 자체 탭 바 — 시스템 부품은 떠 있는 반투명 패널에서 비활성 회색으로 렌더되므로 직접 그린다
+    // Our own tab bar — system controls render as inactive gray on a floating translucent panel, so we draw it ourselves
     CGFloat halfW = size.width / 2;
-    NSButton *ta = [NSButton buttonWithTitle:@"현황판" target:self action:@selector(tabTapped:)];
+    NSButton *ta = [NSButton buttonWithTitle:@"Dashboard" target:self action:@selector(tabTapped:)];
     ta.bordered = NO;
     ta.tag = 0;
     ta.font = [NSFont systemFontOfSize:12.5 weight:NSFontWeightSemibold];
     ta.frame = NSMakeRect(0, size.height - 64, halfW, 30);
     [card addSubview:ta];
     self.tabA = ta;
-    NSButton *tb = [NSButton buttonWithTitle:@"대화" target:self action:@selector(tabTapped:)];
+    NSButton *tb = [NSButton buttonWithTitle:@"Chat" target:self action:@selector(tabTapped:)];
     tb.bordered = NO;
     tb.tag = 1;
     tb.font = [NSFont systemFontOfSize:12.5 weight:NSFontWeightSemibold];
@@ -930,7 +931,7 @@ static NSString *hudTimeShort(NSString *iso) {
     [card addSubview:tabLine];
     self.tabLine = tabLine;
 
-    // ---- 콘텐츠 스크롤 ----
+    // ---- scrolling content ----
     NSScrollView *sv = [[NSScrollView alloc]
         initWithFrame:NSMakeRect(0, 57, size.width, size.height - headerH - 57)];
     sv.hasVerticalScroller = YES;
@@ -940,10 +941,10 @@ static NSString *hudTimeShort(NSString *iso) {
     [card addSubview:sv];
     self.hudScroll = sv;
 
-    // ---- 하단 질문 바 (구분선 없음 — 입력 상자 테두리가 곧 경계) ----
+    // ---- bottom question bar (no divider — the input box border is the boundary) ----
 
-    // 껍데기(스타일) + 순수 입력(글자만) 분리 — 텍스트필드에 직접 스타일을 주면
-    // 글자 상단 붙음 + 편집기 이중 배경으로 깨진다
+    // Separate the shell (style) from the pure input (text only) — styling a text field directly
+    // pins the text to the top and breaks with a doubled editor background
     CGFloat wrapH = 44;
     NSView *inputWrap = [[NSView alloc]
         initWithFrame:NSMakeRect(14, 9, size.width - 28, wrapH)];
@@ -981,27 +982,27 @@ static NSString *hudTimeShort(NSString *iso) {
     tv.textContainer.widthTracksTextView = YES;
     tv.delegate = (id<NSTextViewDelegate>)self;
     inSv.documentView = tv;
-    NSTextField *ph = hudLabel(@"가리에게 물어보기…", [NSFont systemFontOfSize:13],
+    NSTextField *ph = hudLabel(@"Ask Gari…", [NSFont systemFontOfSize:13],
                                [NSColor colorWithCalibratedWhite:0.48 alpha:1], 1,
                                inputWrap.frame.size.width - 24);
     ph.frame = NSMakeRect(13, (wrapH - ph.frame.size.height) / 2,
                           inputWrap.frame.size.width - 24, ph.frame.size.height);
-    [inputWrap addSubview:ph];            // 라벨은 뒤 —
-    [inputWrap addSubview:inSv];          // 입력기가 위 (클릭 방패 제거)
+    [inputWrap addSubview:ph];            // label behind —
+    [inputWrap addSubview:inSv];          // input on top (no click shield)
     self.hudInputScroll = inSv;
     self.hudInput = tv;
     self.hudPlaceholder = ph;
     NSClickGestureRecognizer *wrapTap = [[NSClickGestureRecognizer alloc]
         initWithTarget:self action:@selector(focusInput:)];
-    [inputWrap addGestureRecognizer:wrapTap];   // 상자 여백을 눌러도 포커스
+    [inputWrap addGestureRecognizer:wrapTap];   // clicking the box padding also focuses
 
     return card;
 }
 
-// ---- 다중행 입력기: Enter=전송 / Shift+Enter=줄바꿈, 내용에 맞춰 성장 (최대 5줄) ----
+// ---- multi-line input: Enter = send / Shift+Enter = newline, grows with content (max 5 lines) ----
 - (BOOL)textView:(NSTextView *)tv doCommandBySelector:(SEL)sel {
     if (sel == @selector(insertNewline:)) {
-        if (NSEvent.modifierFlags & NSEventModifierFlagShift) return NO;   // 줄바꿈 허용
+        if (NSEvent.modifierFlags & NSEventModifierFlagShift) return NO;   // allow newline
         [self hudAsk:nil];
         return YES;
     }
@@ -1017,7 +1018,7 @@ static NSString *hudTimeShort(NSString *iso) {
     NSTextView *tv = self.hudInput;
     (void)[tv.layoutManager glyphRangeForTextContainer:tv.textContainer];
     CGFloat used = [tv.layoutManager usedRectForTextContainer:tv.textContainer].size.height;
-    CGFloat wrapH = MAX(44, MIN(124, ceil(used) + 24));   // 1~5줄 성장, 이후 내부 스크롤
+    CGFloat wrapH = MAX(44, MIN(124, ceil(used) + 24));   // grows 1–5 lines, then scrolls inside
     NSView *wrap = self.hudInputScroll.superview;
     if (fabs(wrap.frame.size.height - wrapH) < 1) return;
     NSView *card = wrap.superview;
@@ -1030,7 +1031,7 @@ static NSString *hudTimeShort(NSString *iso) {
     [self buildHud];
 }
 
-// 편집 시작 시 커서(삽입점)를 밝게 — 어두운 패널에서 기본 검정 커서는 안 보인다
+// Brighten the cursor (insertion point) when editing — the default black cursor is invisible on a dark panel
 - (void)controlTextDidBeginEditing:(NSNotification *)note {
     NSTextView *editor = self.hudInput;
     if ([editor isKindOfClass:NSTextView.class]) {
@@ -1091,12 +1092,12 @@ static NSString *hudTimeShort(NSString *iso) {
     }
 }
 
-// hudData(JSON) → 네이티브 행 구성. 반복 다듬기의 단일 지점.
+// hudData (JSON) → native rows. The single place to iterate on polish.
 - (void)buildHud {
     [self updateTabStyles];
     if (self.hudMode == 1) { [self buildChat]; return; }
     CGFloat W = self.hudScroll.frame.size.width;
-    CGFloat pad = 22, contentW = W - pad * 2 - 14;   // 스크롤러 여유
+    CGFloat pad = 22, contentW = W - pad * 2 - 14;   // room for the scroller
     FlippedView *doc = [[FlippedView alloc] initWithFrame:NSMakeRect(0, 0, W, 10)];
     __block CGFloat y = 16;
 
@@ -1106,7 +1107,7 @@ static NSString *hudTimeShort(NSString *iso) {
 
     NSDictionary *d = self.hudData;
 
-    // 헤더 갱신
+    // header refresh
     NSDictionary *pipe = d[@"pipeline"];
     if (pipe) {
         BOOL ok = [pipe[@"ok"] boolValue];
@@ -1114,21 +1115,21 @@ static NSString *hudTimeShort(NSString *iso) {
             ? [NSColor colorWithCalibratedRed:0.30 green:0.82 blue:0.45 alpha:1]
             : [NSColor colorWithCalibratedRed:0.92 green:0.35 blue:0.30 alpha:1]).CGColor;
         NSDictionary *fresh = [d[@"freshness"] isKindOfClass:NSDictionary.class] ? d[@"freshness"] : @{};
-        NSString *age = @"기록 없음";
+        NSString *age = @"no record";
         if (pipe[@"age_min"] != NSNull.null && pipe[@"age_min"]) {
             int interval = [fresh[@"sweep_interval_min"] intValue] ?: 10;
             int remain = interval - [pipe[@"age_min"] intValue];
             age = remain > 0
-                ? [NSString stringWithFormat:@"%@분 전 정리, 다음 ~%d분", pipe[@"age_min"], remain]
-                : [NSString stringWithFormat:@"%@분 전 정리, 곧 갱신", pipe[@"age_min"]];
+                ? [NSString stringWithFormat:@"tidied %@ min ago, next in ~%d min", pipe[@"age_min"], remain]
+                : [NSString stringWithFormat:@"tidied %@ min ago, refreshing soon", pipe[@"age_min"]];
         }
         NSNumber *cost = [pipe[@"cost_today"] isKindOfClass:NSNumber.class] ? pipe[@"cost_today"] : nil;
-        self.headerSub.stringValue = [NSString stringWithFormat:@"%@ · %@ · 카드 %@%@",
-            ok ? @"정상" : @"점검 필요", age, pipe[@"cards_today"] ?: @0,
+        self.headerSub.stringValue = [NSString stringWithFormat:@"%@ · %@ · cards %@%@",
+            ok ? @"healthy" : @"needs a check", age, pipe[@"cards_today"] ?: @0,
             cost ? [NSString stringWithFormat:@" · $%.2f", cost.doubleValue] : @""];
         self.headerTime.stringValue = d[@"time"] ?: @"";
     } else {
-        self.headerSub.stringValue = @"연결 실패 — 터미널에서 gari status";
+        self.headerSub.stringValue = @"Connection failed — run gari status in a terminal";
     }
 
     NSDictionary *fr = [d[@"freshness"] isKindOfClass:NSDictionary.class] ? d[@"freshness"] : @{};
@@ -1144,7 +1145,7 @@ static NSString *hudTimeShort(NSString *iso) {
         y += l.frame.size.height + 8;
     };
 
-    // ═══ 새 문법: 가리의 한 줄 + 오늘 중요한 것 3개 (결과절) — 화면의 존재 이유
+    // ═══ New grammar: Gari's one line + today's 3 things that matter (consequence clauses) — why this screen exists
     NSDictionary *stakes = [d[@"stakes"] isKindOfClass:NSDictionary.class] ? d[@"stakes"] : @{};
     NSArray *stakeList = [stakes[@"stakes"] isKindOfClass:NSArray.class] ? stakes[@"stakes"] : @[];
     if ([stakes[@"brief"] length]) {
@@ -1164,9 +1165,9 @@ static NSString *hudTimeShort(NSString *iso) {
         NSTextField *gain = hudLabel(st[@"gain"],
             [NSFont systemFontOfSize:13.5 weight:NSFontWeightSemibold], fg, 0, tw2 - 26);
         NSString *subT = [action isEqualToString:@"input"]
-            ? [NSString stringWithFormat:@"%@  ↳ 아래 입력창에 답하면 됩니다", st[@"label"] ?: @""]
+            ? [NSString stringWithFormat:@"%@  ↳ answer in the box below", st[@"label"] ?: @""]
             : ([action isEqualToString:@"chat"]
-               ? [NSString stringWithFormat:@"%@  ↳ 눌러서 대화로", st[@"label"] ?: @""]
+               ? [NSString stringWithFormat:@"%@  ↳ click to chat", st[@"label"] ?: @""]
                : (st[@"label"] ?: @""));
         NSTextField *lb = hudLabel(subT, [NSFont systemFontOfSize:11.5], dim, 2, tw2 - 26);
         CGFloat rh = 13 + gain.frame.size.height + 5 + lb.frame.size.height + 13;
@@ -1181,16 +1182,16 @@ static NSString *hudTimeShort(NSString *iso) {
         lb.frame = NSMakeRect(38, 12, tw2 - 26, lb.frame.size.height);
         [row addSubview:lb];
         if (hasBtns) {
-            NSButton *done = flatBtn(@"완료", accent, self, @selector(resolvePending:));
+            NSButton *done = flatBtn(@"Done", accent, self, @selector(resolvePending:));
             done.identifier = st[@"id"];
             done.frame = NSMakeRect(contentW - 66, rh / 2 + 2, 52, 23);
             [row addSubview:done];
-            NSButton *later = flatBtn(@"나중에", dim, self, @selector(snoozePending:));
+            NSButton *later = flatBtn(@"Later", dim, self, @selector(snoozePending:));
             later.identifier = st[@"id"];
             later.frame = NSMakeRect(contentW - 66, rh / 2 - 25, 52, 23);
             [row addSubview:later];
         } else {
-            gain.identifier = action;   // input→포커스 / chat→대화 탭
+            gain.identifier = action;   // input → focus / chat → chat tab
             NSClickGestureRecognizer *tap = [[NSClickGestureRecognizer alloc]
                 initWithTarget:self action:@selector(stakeTapped:)];
             [gain addGestureRecognizer:tap];
@@ -1205,7 +1206,7 @@ static NSString *hudTimeShort(NSString *iso) {
     if (stakeList.count) {
         NSNumber *tot = [stakes[@"total"] isKindOfClass:NSNumber.class] ? stakes[@"total"] : @0;
         NSButton *more = [NSButton buttonWithTitle:
-            [NSString stringWithFormat:@"나머지 %@건은 가리가 보고 있습니다 · 상세 %@",
+            [NSString stringWithFormat:@"Gari is watching the other %@ · details %@",
              tot, self.showDetail ? @"▾" : @"▸"]
             target:self action:@selector(toggleDetail:)];
         more.bordered = NO;
@@ -1218,17 +1219,17 @@ static NSString *hudTimeShort(NSString *iso) {
         y += 36;
     }
 
-    if (self.showDetail || !stakeList.count) {   // 상세 = 기존 화면 전체 (스테이크 없으면 항상)
+    if (self.showDetail || !stakeList.count) {   // details = the whole older view (always, when there are no stakes)
 
-    // ═══ 그룹 1: 오늘 — 한 칸·참견·질문 합본 카드 (아침 산출, 하루 1회)
+    // ═══ Group 1: Today — one combined card for the one step, nudge, question (morning output, once a day)
     NSDictionary *nsD = d[@"next_step"];
     NSString *nag = [d[@"nag"] isKindOfClass:NSString.class] ? d[@"nag"] : @"";
     NSString *question = [d[@"question"] isKindOfClass:NSString.class] ? d[@"question"] : @"";
     NSString *mentor = [d[@"mentor"] isKindOfClass:NSString.class] ? d[@"mentor"] : @"";
     if ([nsD[@"action"] length] || nag.length || question.length || mentor.length) {
         section(mts.length
-            ? [NSString stringWithFormat:@"오늘 — %@ 산출 · 내일 %d시 갱신", mts, [fr[@"report_hour"] intValue] ?: 9]
-            : @"오늘");
+            ? [NSString stringWithFormat:@"Today — computed %@ · refreshes tomorrow at %d:00", mts, [fr[@"report_hour"] intValue] ?: 9]
+            : @"Today");
         FlippedView *today = [[FlippedView alloc] initWithFrame:NSZeroRect];
         today.wantsLayer = YES;
         today.layer.backgroundColor = [accent colorWithAlphaComponent:0.10].CGColor;
@@ -1264,11 +1265,11 @@ static NSString *hudTimeShort(NSString *iso) {
             [today addSubview:tl];
             cy += tl.frame.size.height;
         };
-        subRow(@"멘토", mentor, [NSColor colorWithCalibratedWhite:0.62 alpha:1]);
-        subRow(@"참견", nag, accent);
-        subRow(@"질문", question, dim);
+        subRow(@"Mentor", mentor, [NSColor colorWithCalibratedWhite:0.62 alpha:1]);
+        subRow(@"Nudge", nag, accent);
+        subRow(@"Question", question, dim);
         if (question.length) {
-            NSTextField *hint = hudLabel(@"↳ 아래 입력창에 답하면 기록됩니다",
+            NSTextField *hint = hudLabel(@"↳ answer in the box below and it gets recorded",
                 [NSFont systemFontOfSize:10.5], dim, 1, innerW - 42);
             hint.frame = NSMakeRect(56, cy + 3, innerW - 42, hint.frame.size.height);
             [today addSubview:hint];
@@ -1279,17 +1280,17 @@ static NSString *hudTimeShort(NSString *iso) {
         y += cy + 13 + 22;
     }
 
-    // ═══ 그룹 1.5: 프로젝트 방향판 — 어디로 가고 있는가 (위키 기반, 사용자 정의: "현황판은 방향 확인")
+    // ═══ Group 1.5: project compass — where things are heading (wiki-based; user's definition: "the dashboard is for checking direction")
     NSArray *compass = [d[@"compass"] isKindOfClass:NSArray.class] ? d[@"compass"] : @[];
     if (compass.count) {
-        section(@"프로젝트 방향판 — 위키 기준");
+        section(@"Project compass — from the wikis");
         for (NSDictionary *b in compass) {
             NSTextField *pj = hudLabel(b[@"project"],
                 [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold], fg, 1, contentW - 28);
             NSTextField *idl = hudLabel(b[@"identity"],
                 [NSFont systemFontOfSize:10.5], dim, 2, contentW - 28);
             NSTextField *nx = hudLabel([b[@"next"] length]
-                    ? [NSString stringWithFormat:@"다음: %@", b[@"next"]] : @"다음: (미결 없음)",
+                    ? [NSString stringWithFormat:@"Next: %@", b[@"next"]] : @"Next: (no pending items)",
                 [NSFont systemFontOfSize:11.5],
                 [NSColor colorWithCalibratedWhite:0.82 alpha:1], 2, contentW - 28);
             CGFloat rh = 10 + pj.frame.size.height + 2 + idl.frame.size.height
@@ -1313,7 +1314,7 @@ static NSString *hudTimeShort(NSString *iso) {
         y += 14;
     }
 
-    // ═══ 그룹 2: 처리함 — 형님 액션이 필요한 전부 (지금/끝난 듯/중복/결재/채점/그 외)
+    // ═══ Group 2: Inbox — everything that needs your action (now / looks done / duplicates / sign-off / grading / others)
     NSArray *pendings = d[@"pendings"];
     NSDictionary *triage = [d[@"triage"] isKindOfClass:NSDictionary.class] ? d[@"triage"] : @{};
     NSArray *approvals = d[@"approvals"];
@@ -1322,8 +1323,8 @@ static NSString *hudTimeShort(NSString *iso) {
     if (inboxTotal) {
         NSString *tts = hudTimeShort(triage[@"ts"]);
         section(tts.length
-            ? [NSString stringWithFormat:@"처리함 %lu — %@ 가리 검토", inboxTotal, tts]
-            : [NSString stringWithFormat:@"처리함 %lu", inboxTotal]);
+            ? [NSString stringWithFormat:@"Inbox %lu — reviewed by Gari %@", inboxTotal, tts]
+            : [NSString stringWithFormat:@"Inbox %lu", inboxTotal]);
 
         NSString *nowId = triage[@"now"][@"id"] ?: @"";
         NSString *nowWhy = triage[@"now"][@"why"] ?: @"";
@@ -1334,7 +1335,7 @@ static NSString *hudTimeShort(NSString *iso) {
         for (NSDictionary *dp in (triage[@"dupes"] ?: @[]))
             for (NSString *dr in (dp[@"drop"] ?: @[])) [dupeDrop addObject:dr];
 
-        // 미결 행 공통 (완료/나중에 버튼 포함)
+        // shared pending row (with Done/Later buttons)
         void (^pendRow)(NSDictionary *, NSString *, NSColor *, BOOL) =
             ^(NSDictionary *p, NSString *tag, NSColor *tagColor, BOOL highlight) {
             BOOL dimmed = !highlight && tag.length;
@@ -1342,11 +1343,11 @@ static NSString *hudTimeShort(NSString *iso) {
                 [NSFont systemFontOfSize:13 weight:highlight ? NSFontWeightSemibold : NSFontWeightRegular],
                 dimmed ? dim : fg, 0, contentW - 126);
             NSString *origin = [p[@"restored"] boolValue]
-                ? [NSString stringWithFormat:@"소급 복원 · %@/%@", p[@"tool"] ?: @"", p[@"project"] ?: @""]
+                ? [NSString stringWithFormat:@"backfilled · %@/%@", p[@"tool"] ?: @"", p[@"project"] ?: @""]
                 : [NSString stringWithFormat:@"%@/%@", p[@"tool"] ?: @"", p[@"project"] ?: @""];
             NSString *subTxt = tag.length
                 ? [NSString stringWithFormat:@"%@ · %@", tag, origin]
-                : [origin stringByAppendingString:@" · 눌러서 맥락 묻기"];
+                : [origin stringByAppendingString:@" · click to ask for context"];
             NSTextField *sub2 = hudLabel(subTxt, [NSFont systemFontOfSize:10.5],
                 tagColor ?: dim, 0, contentW - 126);
             CGFloat rh = 11 + t.frame.size.height + 3 + sub2.frame.size.height + 11;
@@ -1360,15 +1361,15 @@ static NSString *hudTimeShort(NSString *iso) {
             [row addSubview:t];
             sub2.frame = NSMakeRect(14, 10, contentW - 126, sub2.frame.size.height);
             [row addSubview:sub2];
-            t.identifier = p[@"id"] ?: @"";   // 본문 클릭 = 가리에게 이 미결의 맥락 질문
+            t.identifier = p[@"id"] ?: @"";   // clicking the text = ask Gari for this pending item's context
             NSClickGestureRecognizer *tap = [[NSClickGestureRecognizer alloc]
                 initWithTarget:self action:@selector(pendingRowTapped:)];
             [t addGestureRecognizer:tap];
-            NSButton *done = flatBtn(@"완료", accent, self, @selector(resolvePending:));
+            NSButton *done = flatBtn(@"Done", accent, self, @selector(resolvePending:));
             done.identifier = p[@"id"] ?: @"";
             done.frame = NSMakeRect(contentW - 66, rh / 2 + 2, 52, 23);
             [row addSubview:done];
-            NSButton *later = flatBtn(@"나중에", dim, self, @selector(snoozePending:));
+            NSButton *later = flatBtn(@"Later", dim, self, @selector(snoozePending:));
             later.identifier = p[@"id"] ?: @"";
             later.frame = NSMakeRect(contentW - 66, rh / 2 - 25, 52, 23);
             [row addSubview:later];
@@ -1377,8 +1378,8 @@ static NSString *hudTimeShort(NSString *iso) {
         };
 
         NSDictionary *kinds = [triage[@"kinds"] isKindOfClass:NSDictionary.class] ? triage[@"kinds"] : @{};
-        NSMutableArray *rest = [NSMutableArray array];       // 방향급 — 형님만 정할 수 있는 것
-        NSMutableArray *workP = [NSMutableArray array];      // 실무급 — 파견으로 처리 가능
+        NSMutableArray *rest = [NSMutableArray array];       // direction-level — only you can decide
+        NSMutableArray *workP = [NSMutableArray array];      // work-level — can be handled by delegation
         NSDictionary *nowP = nil;
         NSMutableArray *doneP = [NSMutableArray array], *dupeP = [NSMutableArray array];
         for (NSDictionary *p in pendings) {
@@ -1389,19 +1390,19 @@ static NSString *hudTimeShort(NSString *iso) {
             else if ([kinds[pid] isEqualToString:@"work"]) [workP addObject:p];
             else [rest addObject:p];
         }
-        if (nowP) pendRow(nowP, [NSString stringWithFormat:@"▶ 지금 이거%@%@",
+        if (nowP) pendRow(nowP, [NSString stringWithFormat:@"▶ Do this now%@%@",
                                  nowWhy.length ? @" — " : @"", nowWhy], accent, YES);
-        // 정리 제안(끝난 듯·중복)은 가리의 살림 — 기본 접힘, 형님 시야는 결정 대기만
+        // Tidy-up suggestions (looks done, duplicates) are Gari's housekeeping — collapsed by default; you only see what awaits a decision
         if (doneP.count + dupeP.count) {
             if (self.showSuggestions) {
                 for (NSDictionary *p in doneP)
-                    pendRow(p, [NSString stringWithFormat:@"끝난 듯 · %@", doneLike[p[@"id"]]],
+                    pendRow(p, [NSString stringWithFormat:@"Looks done · %@", doneLike[p[@"id"]]],
                             [NSColor systemGreenColor], NO);
-                for (NSDictionary *p in dupeP) pendRow(p, @"중복 — 접어도 됨", nil, NO);
+                for (NSDictionary *p in dupeP) pendRow(p, @"Duplicate — safe to fold", nil, NO);
             }
             NSButton *sg = [NSButton buttonWithTitle:
-                self.showSuggestions ? @"정리 제안 접기 ▾"
-                    : [NSString stringWithFormat:@"가리 정리 제안 %lu건 ▸ (끝난 듯·중복 — 확인만 하면 됨)",
+                self.showSuggestions ? @"Hide tidy-up suggestions ▾"
+                    : [NSString stringWithFormat:@"Gari's tidy-up suggestions: %lu ▸ (looks done / duplicates — just confirm)",
                        doneP.count + dupeP.count]
                 target:self action:@selector(toggleSuggestions:)];
             sg.bordered = NO;
@@ -1414,14 +1415,14 @@ static NSString *hudTimeShort(NSString *iso) {
             y += 30;
         }
 
-        // 결재 — 입력창으로 답하면 기록됨
+        // Sign-off — answering in the input box records it
         for (NSString *a in approvals) {
             NSArray *parts = [a componentsSeparatedByString:@" — "];
             NSTextField *t = hudLabel(parts[0],
                 [NSFont systemFontOfSize:13 weight:NSFontWeightMedium], fg, 0, contentW - 46);
             NSTextField *sub2 = hudLabel(parts.count > 1
                     ? [[parts subarrayWithRange:NSMakeRange(1, parts.count - 1)] componentsJoinedByString:@" — "]
-                    : @"결재 — 아래 입력창에 답하면 기록됩니다",
+                    : @"Sign-off — answer in the box below and it gets recorded",
                 [NSFont systemFontOfSize:10.5], dim, 2, contentW - 46);
             CGFloat rh = 11 + t.frame.size.height + 3 + sub2.frame.size.height + 11;
             NSView *row = hudRowCard(contentW);
@@ -1437,10 +1438,10 @@ static NSString *hudTimeShort(NSString *iso) {
             y += rh + 8;
         }
 
-        // 채점 — 맞음/오발
+        // Grading — right / misfire
         for (NSDictionary *s in shadowItems) {
             NSTextField *t = hudLabel(s[@"text"], [NSFont systemFontOfSize:12.5], fg, 0, contentW - 150);
-            NSTextField *sub2 = hudLabel(@"코치 채점", [NSFont systemFontOfSize:10.5], dim, 1, contentW - 150);
+            NSTextField *sub2 = hudLabel(@"Coach grading", [NSFont systemFontOfSize:10.5], dim, 1, contentW - 150);
             CGFloat rh = 11 + t.frame.size.height + 3 + sub2.frame.size.height + 11;
             NSView *row = hudRowCard(contentW);
             row.frame = NSMakeRect(pad, y, contentW, rh);
@@ -1448,11 +1449,11 @@ static NSString *hudTimeShort(NSString *iso) {
             [row addSubview:t];
             sub2.frame = NSMakeRect(14, 10, contentW - 150, sub2.frame.size.height);
             [row addSubview:sub2];
-            NSButton *ok = flatBtn(@"맞음", [NSColor systemGreenColor], self, @selector(gradeShadow:));
+            NSButton *ok = flatBtn(@"Right", [NSColor systemGreenColor], self, @selector(gradeShadow:));
             ok.identifier = [NSString stringWithFormat:@"%@|right", s[@"id"]];
             ok.frame = NSMakeRect(contentW - 126, (rh - 23) / 2, 54, 23);
             [row addSubview:ok];
-            NSButton *no = flatBtn(@"오발", dim, self, @selector(gradeShadow:));
+            NSButton *no = flatBtn(@"Misfire", dim, self, @selector(gradeShadow:));
             no.identifier = [NSString stringWithFormat:@"%@|wrong", s[@"id"]];
             no.frame = NSMakeRect(contentW - 66, (rh - 23) / 2, 54, 23);
             [row addSubview:no];
@@ -1460,14 +1461,14 @@ static NSString *hudTimeShort(NSString *iso) {
             y += rh + 8;
         }
 
-        // 실무급 — 형님이 아니라 에이전트의 일 (기본 접힘)
+        // Work-level — the agent's job, not yours (collapsed by default)
         if (workP.count) {
             if (self.showWorkItems) {
-                for (NSDictionary *p in workP) pendRow(p, @"실무 — 파견 가능", nil, NO);
+                for (NSDictionary *p in workP) pendRow(p, @"Work — can be delegated", nil, NO);
             }
             NSButton *wk = [NSButton buttonWithTitle:
-                self.showWorkItems ? @"실무 대기 접기 ▾"
-                    : [NSString stringWithFormat:@"실무 대기 %lu건 ▸ (구현·검증 — 대화에서 파견 지시 가능)",
+                self.showWorkItems ? @"Hide work queue ▾"
+                    : [NSString stringWithFormat:@"Work queue: %lu ▸ (build / verify — delegate from chat)",
                        workP.count]
                 target:self action:@selector(toggleWorkItems:)];
             wk.bordered = NO;
@@ -1480,14 +1481,14 @@ static NSString *hudTimeShort(NSString *iso) {
             y += 30;
         }
 
-        // 그 외 미결 — 기본 접힘
+        // Other pendings — collapsed by default
         if (rest.count) {
             if (self.showAllPendings) {
                 for (NSDictionary *p in rest) pendRow(p, @"", nil, NO);
             }
             NSButton *toggle = [NSButton buttonWithTitle:
-                self.showAllPendings ? @"접기 ▾"
-                    : [NSString stringWithFormat:@"그 외 미결 %lu ▸", rest.count]
+                self.showAllPendings ? @"Collapse ▾"
+                    : [NSString stringWithFormat:@"Other pendings: %lu ▸", rest.count]
                 target:self action:@selector(toggleAllPendings:)];
             toggle.bordered = NO;
             toggle.controlSize = NSControlSizeSmall;
@@ -1501,12 +1502,12 @@ static NSString *hudTimeShort(NSString *iso) {
         y += 14;
     }
 
-    // ═══ 그룹 3: 오늘 기록 — 1줄 요약, 펼치면 상세
+    // ═══ Group 3: today's log — a one-line summary, expand for details
     NSArray *decs = d[@"decisions"], *cors = d[@"corrections"], *wins = d[@"wins"];
     NSUInteger recTotal = decs.count + cors.count + wins.count;
     if (recTotal) {
         NSButton *rec = [NSButton buttonWithTitle:
-            [NSString stringWithFormat:@"오늘 기록: 결정 %lu · 교정 %lu · 연승 %lu %@",
+            [NSString stringWithFormat:@"Today: %lu decisions · %lu corrections · %lu wins %@",
              decs.count, cors.count, wins.count, self.showRecords ? @"▾" : @"▸"]
             target:self action:@selector(toggleRecords:)];
         rec.bordered = NO;
@@ -1531,7 +1532,7 @@ static NSString *hudTimeShort(NSString *iso) {
                     y += t.frame.size.height + 7;
                 }
                 if (items.count > shown) {
-                    NSTextField *more = hudLabel([NSString stringWithFormat:@"외 %lu건", items.count - shown],
+                    NSTextField *more = hudLabel([NSString stringWithFormat:@"+%lu more", items.count - shown],
                                                  [NSFont systemFontOfSize:11], dim, 1, contentW);
                     more.frame = NSMakeRect(pad + 18, y, contentW, more.frame.size.height);
                     [doc addSubview:more];
@@ -1545,18 +1546,18 @@ static NSString *hudTimeShort(NSString *iso) {
         y += 8;
     }
 
-    }   // 상세 게이트 끝
+    }   // end of the details gate
 
     doc.frame = NSMakeRect(0, 0, W, y + 12);
     CGFloat dashOldY = self.hudScroll.contentView.bounds.origin.y;
     self.hudScroll.documentView = doc;
     [doc scrollPoint:NSMakePoint(0, MIN(dashOldY,
-        MAX(0, y + 12 - self.hudScroll.frame.size.height)))];   // 토글 펼쳐도 읽던 자리 유지
+        MAX(0, y + 12 - self.hudScroll.frame.size.height)))];   // keep the reading position when a toggle expands
 }
 
 - (void)buildChat {
     CGFloat W = self.hudScroll.frame.size.width;
-    CGFloat pad = 22, contentW = W - pad * 2;   // 좌우 대칭 (스크롤바는 오토하이드)
+    CGFloat pad = 22, contentW = W - pad * 2;   // left/right symmetric (scrollbar auto-hides)
     FlippedView *doc = [[FlippedView alloc] initWithFrame:NSMakeRect(0, 0, W, 10)];
     __block CGFloat y = 14;
     NSColor *fg = [NSColor colorWithCalibratedWhite:0.94 alpha:1];
@@ -1564,19 +1565,19 @@ static NSString *hudTimeShort(NSString *iso) {
     NSColor *accent = [NSColor colorWithCalibratedRed:1.00 green:0.48 blue:0.10 alpha:1];
     NSDictionary *chat = self.hudData[@"chat"];
 
-    // 세션 바: 현재 세션(플랫 버튼, 누르면 다크 메뉴) + 새 대화
+    // Session bar: current session (flat button, opens a dark menu) + New chat
     NSArray *sessions = [chat[@"sessions"] isKindOfClass:NSArray.class] ? chat[@"sessions"] : @[];
     NSMutableArray *ids = [NSMutableArray array];
     NSMutableArray *titles = [NSMutableArray array];
     NSString *cur = chat[@"session"] ?: @"";
     for (NSDictionary *s in sessions) {
         [ids addObject:s[@"id"] ?: @""];
-        [titles addObject:s[@"title"] ?: @"대화"];
+        [titles addObject:s[@"title"] ?: @"chat"];
     }
     self.chatSessionIds = ids;
     self.chatSessionTitles = titles;
     self.chatCurrentSid = cur;
-    NSString *curTitle = chat[@"title"] ?: @"새 대화";
+    NSString *curTitle = chat[@"title"] ?: @"New chat";
     if (curTitle.length > 26) curTitle = [[curTitle substringToIndex:26] stringByAppendingString:@"…"];
     NSButton *sess = [NSButton buttonWithTitle:
         [NSString stringWithFormat:@"%@  ▾", curTitle] target:self action:@selector(showSessionMenu:)];
@@ -1586,20 +1587,20 @@ static NSString *hudTimeShort(NSString *iso) {
     sess.alignment = NSTextAlignmentLeft;
     sess.frame = NSMakeRect(pad - 4, y, contentW - 84, 24);
     [doc addSubview:sess];
-    NSButton *nb = flatBtn(@"새 대화", accent, self, @selector(chatNew:));
+    NSButton *nb = flatBtn(@"New chat", accent, self, @selector(chatNew:));
     nb.frame = NSMakeRect(pad + contentW - 72, y, 72, 24);
     [doc addSubview:nb];
     y += 34;
 
-    // 말풍선 스레드
+    // bubble thread
     NSArray *thread = [chat[@"thread"] isKindOfClass:NSArray.class] ? chat[@"thread"] : @[];
     void (^bubble)(NSString *, BOOL) = ^(NSString *rawText, BOOL mine) {
         if (!rawText.length) return;
         CGFloat maxW = contentW * 0.82;
-        // 로컬 이미지 추출: ![..](path) / [첨부: path]
+        // extract local images: ![..](path) / [ATTACH: path]
         NSMutableArray *imgPaths = [NSMutableArray array];
         NSString *text = rawText;
-        for (NSString *pat in @[@"!\\[[^\\]]*\\]\\(([^)]+)\\)", @"\\[첨부:\\s*([^\\]]+)\\]"]) {
+        for (NSString *pat in @[@"!\\[[^\\]]*\\]\\(([^)]+)\\)", @"\\[(?:ATTACH|첨부):\\s*([^\\]]+)\\]"]) {
             NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:pat options:0 error:nil];
             for (NSTextCheckingResult *m in [re matchesInString:text options:0
                                                            range:NSMakeRange(0, text.length)]) {
@@ -1630,24 +1631,24 @@ static NSString *hudTimeShort(NSString *iso) {
                 y += ih + 7;
             }
         };
-        if (!text.length) { imgBubbles(); return; }   // 이미지만 있는 메시지
+        if (!text.length) { imgBubbles(); return; }   // image-only message
         NSTextView *l = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, maxW - 32, 10)];
         l.editable = NO;
-        l.selectable = YES;                    // 링크 클릭·본문 복사 가능
+        l.selectable = YES;                    // links clickable, text copyable
         l.drawsBackground = NO;
         l.textContainerInset = NSZeroSize;
         l.textContainer.lineFragmentPadding = 0;
         l.textContainer.widthTracksTextView = NO;
         l.textContainer.containerSize = NSMakeSize(maxW - 32, CGFLOAT_MAX);
-        l.linkTextAttributes = @{                // 파랑 강제 해제 — 팔레트의 주황으로
+        l.linkTextAttributes = @{                // drop the forced blue — use the palette's orange
             NSForegroundColorAttributeName: [NSColor colorWithCalibratedRed:1.0 green:0.62 blue:0.30 alpha:1],
             NSUnderlineStyleAttributeName: @(NSUnderlineStyleSingle),
             NSCursorAttributeName: NSCursor.pointingHandCursor};
         [l.textStorage setAttributedString:mdRender(text, 14,
             mine ? [NSColor colorWithCalibratedWhite:1.0 alpha:0.98] : fg)];
-        (void)[l.layoutManager glyphRangeForTextContainer:l.textContainer];   // 긴 답도 전체 레이아웃 강제
+        (void)[l.layoutManager glyphRangeForTextContainer:l.textContainer];   // force full layout even for long answers
         NSRect used = [l.layoutManager usedRectForTextContainer:l.textContainer];
-        CGFloat tw = MIN(maxW - 32, ceil(used.size.width) + 2);   // 풍선은 말한 만큼만
+        CGFloat tw = MIN(maxW - 32, ceil(used.size.width) + 2);   // the bubble is only as wide as what was said
         l.textContainer.containerSize = NSMakeSize(tw, CGFLOAT_MAX);
         (void)[l.layoutManager glyphRangeForTextContainer:l.textContainer];
         used = [l.layoutManager usedRectForTextContainer:l.textContainer];
@@ -1672,7 +1673,7 @@ static NSString *hudTimeShort(NSString *iso) {
         imgBubbles();
     };
     if (!thread.count && !self.asking) {
-        NSTextField *empty = hudLabel(@"무엇이든 물어보십시오, 형님 — 기억·문서·일반 지식·작업 파견까지.",
+        NSTextField *empty = hudLabel(@"Ask me anything — memory, docs, general knowledge, or hand me a task.",
                                       [NSFont systemFontOfSize:12], dim, 2, contentW);
         empty.frame = NSMakeRect(pad, y + 6, contentW, empty.frame.size.height);
         [doc addSubview:empty];
@@ -1683,7 +1684,7 @@ static NSString *hudTimeShort(NSString *iso) {
         bubble(t[@"q"], YES);
         bubble(t[@"a"], NO);
         lastAnswer = doc.subviews.lastObject;
-        if ([t[@"ts"] length]) {   // 문답 시각 — 답변 아래 작게
+        if ([t[@"ts"] length]) {   // Q&A time — small, under the answer
             NSTextField *tm = hudLabel(t[@"ts"], [NSFont systemFontOfSize:9.5],
                 [NSColor colorWithCalibratedWhite:0.40 alpha:1], 1, 60);
             tm.frame = NSMakeRect(pad + 4, y - 3, 60, tm.frame.size.height);
@@ -1691,14 +1692,14 @@ static NSString *hudTimeShort(NSString *iso) {
             y += tm.frame.size.height + 10;
         }
     }
-    // 새 답변 도착 시 페이드인 (스레드가 늘었을 때만)
+    // fade in when a new answer arrives (only when the thread grew)
     if (!self.asking && (NSInteger)thread.count > self.lastThreadCount && lastAnswer) {
         lastAnswer.alphaValue = 0;
         [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
             ctx.duration = 0.3;
             lastAnswer.animator.alphaValue = 1;
         }];
-        [self.hudWindow makeFirstResponder:self.hudInput];   // 답 왔으니 바로 이어 쓸 수 있게
+        [self.hudWindow makeFirstResponder:self.hudInput];   // the answer is here, so you can keep typing right away
     }
     self.lastThreadCount = (NSInteger)thread.count;
     if (self.asking) {
@@ -1707,7 +1708,7 @@ static NSString *hudTimeShort(NSString *iso) {
             [GariStateReader gariPath:@"store/ask-status.txt"]
             encoding:NSUTF8StringEncoding error:nil];
         st = [st stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-        if (!st.length) st = @"생각하는 중…";
+        if (!st.length) st = @"Thinking…";
         NSTextField *sl = hudLabel(st, [NSFont systemFontOfSize:12], dim, 2, contentW * 0.82 - 52);
         CGFloat sw = MIN(contentW * 0.82 - 52, ceil([sl.cell cellSizeForBounds:
             NSMakeRect(0, 0, contentW * 0.82 - 52, 200)].width) + 2);
@@ -1739,9 +1740,9 @@ static NSString *hudTimeShort(NSString *iso) {
         || (oldDoc.frame.size.height - (oldY + viewH)) < 80;
     self.hudScroll.documentView = doc;
     if (nearBottom) {
-        [doc scrollPoint:NSMakePoint(0, MAX(0, y + 12 - viewH))];   // 바닥 유지 (새 메시지 따라감)
+        [doc scrollPoint:NSMakePoint(0, MAX(0, y + 12 - viewH))];   // stay at the bottom (follow new messages)
     } else {
-        [doc scrollPoint:NSMakePoint(0, MIN(oldY, MAX(0, y + 12 - viewH)))];  // 읽던 자리 보존
+        [doc scrollPoint:NSMakePoint(0, MIN(oldY, MAX(0, y + 12 - viewH)))];  // keep the reading position
     }
 }
 
@@ -1760,7 +1761,7 @@ static NSString *hudTimeShort(NSString *iso) {
         [menu addItem:it];
     }
     [menu addItem:NSMenuItem.separatorItem];
-    NSMenuItem *fresh = [[NSMenuItem alloc] initWithTitle:@"새 대화 시작"
+    NSMenuItem *fresh = [[NSMenuItem alloc] initWithTitle:@"Start a new chat"
         action:@selector(chatNew:) keyEquivalent:@""];
     fresh.target = self;
     [menu addItem:fresh];
@@ -1793,9 +1794,9 @@ static NSString *hudTimeShort(NSString *iso) {
 }
 
 - (void)openHud {
-    self.hopV = 3.5;   // 불러주셨다 — 반김
+    self.hopV = 3.5;   // you called — a happy greeting
 
-    // 읽음 처리 (현황판이 보고 내용을 담으므로 배지 해제 근거가 된다)
+    // mark as read (the dashboard carries the report, so opening it clears the badge)
     NSDateFormatter *df = [NSDateFormatter new]; df.dateFormat = @"yyyy-MM-dd";
     [NSFileManager.defaultManager createFileAtPath:
         [GariStateReader gariPath:[NSString stringWithFormat:@"pet/seen-%@",
@@ -1804,7 +1805,7 @@ static NSString *hudTimeShort(NSString *iso) {
 
     CGFloat W = 400, H = 500;
     if (!self.hudWindow) {
-        // 저장된 크기 복원 (드래그로 조절 가능, 끝나면 기억)
+        // restore the saved size (resizable by dragging, remembered afterwards)
         NSData *sd = [NSData dataWithContentsOfFile:[GariStateReader gariPath:@"pet/hud-size.json"]];
         if (sd) {
             NSDictionary *sj = [NSJSONSerialization JSONObjectWithData:sd options:0 error:nil];
@@ -1816,7 +1817,7 @@ static NSString *hudTimeShort(NSString *iso) {
             styleMask:(NSWindowStyleMaskBorderless | NSWindowStyleMaskResizable)
             backing:NSBackingStoreBuffered defer:NO];
         self.hudWindow.minSize = NSMakeSize(380, 430);
-        self.hudWindow.movableByWindowBackground = YES;   // 빈 곳 드래그로 패널 이동
+        self.hudWindow.movableByWindowBackground = YES;   // drag empty space to move the panel
         self.hudWindow.maxSize = NSMakeSize(1000, NSScreen.mainScreen.visibleFrame.size.height);
         [NSNotificationCenter.defaultCenter addObserverForName:NSWindowDidEndLiveResizeNotification
             object:self.hudWindow queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
@@ -1831,7 +1832,7 @@ static NSString *hudTimeShort(NSString *iso) {
         self.hudWindow.hasShadow = YES;
         self.hudWindow.contentView = [self makeHudCard:NSMakeSize(W, H)];
         [self wireGrip];
-        // 팝오버 표준: 바깥 클릭 = 닫기
+        // popover standard: clicking outside = close
         [NSEvent addGlobalMonitorForEventsMatchingMask:
             NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown
             handler:^(NSEvent *ev) {
@@ -1839,7 +1840,7 @@ static NSString *hudTimeShort(NSString *iso) {
             }];
     }
 
-    // 위치: 펫 왼쪽 우선, 공간 없으면 오른쪽 — 화면 안으로 클램프
+    // position: prefer left of the pet, right if there's no room — clamped to the screen
     NSRect pet = self.window.frame;
     NSRect screen = (self.window.screen ?: NSScreen.mainScreen).visibleFrame;
     CGFloat x = pet.origin.x - W - 12;
@@ -1849,14 +1850,14 @@ static NSString *hudTimeShort(NSString *iso) {
     [self.hudWindow setFrameOrigin:NSMakePoint(x, y)];
 
     [self buildHud];
-    // 소환 즉시 타이핑 가능 (Spotlight/Raycast 규약) — 형님이 의도적으로 연 것이므로 포커스 가져옴
+    // type immediately on summon (Spotlight/Raycast convention) — you opened it on purpose, so take focus
     [NSApp activateIgnoringOtherApps:YES];
     [self.hudWindow makeKeyAndOrderFront:nil];
     [self.hudWindow makeFirstResponder:self.hudInput];
     [self fetchHud];
 }
 
-// 내용은 gari hud가 조립 (본체가 단일 진실 — 펫은 표시만)
+// content is assembled by gari hud (the engine is the single source of truth — the pet only displays)
 - (void)fetchHud {
     NSTask *t = [NSTask new];
     t.launchPath = [GariStateReader gariPath:@"bin/gari"];
@@ -1882,7 +1883,7 @@ static NSString *hudTimeShort(NSString *iso) {
     }
 }
 
-// 그림자 채점 버튼 — gari grade <ID> right|wrong
+// shadow grading buttons — gari grade <ID> right|wrong
 - (void)gradeShadow:(NSButton *)btn {
     NSArray *parts = [btn.identifier componentsSeparatedByString:@"|"];
     if (parts.count != 2) return;
@@ -1893,7 +1894,7 @@ static NSString *hudTimeShort(NSString *iso) {
     __weak typeof(self) weakSelf = self;
     t.terminationHandler = ^(NSTask *task) {
         dispatch_async(dispatch_get_main_queue(), ^{
-            weakSelf.happyUntil = [NSDate dateWithTimeIntervalSinceNow:1.2];  // 채점 감사 표시
+            weakSelf.happyUntil = [NSDate dateWithTimeIntervalSinceNow:1.2];  // a thank-you for grading
             [weakSelf fetchHud];
         });
     };
@@ -1910,7 +1911,7 @@ static NSString *hudTimeShort(NSString *iso) {
     NSString *proj = g.view.identifier;
     if (!proj.length || self.asking) return;
     [self.hudInput setString:[NSString stringWithFormat:
-        @"%@ 프로젝트 지금 방향이 어떻게 되고 있어? 다음에 뭘 정해야 해?", proj]];
+        @"Where is the %@ project heading right now? What needs deciding next?", proj]];
     [self hudAsk:nil];
 }
 
@@ -1918,7 +1919,7 @@ static NSString *hudTimeShort(NSString *iso) {
     NSString *pid = g.view.identifier;
     if (!pid.length || self.asking) return;
     [self.hudInput setString:[NSString stringWithFormat:
-        @"미결 카드 %@ — 이게 무슨 맥락에서 나온 건지, 지금도 유효한지 알려줘", pid]];
+        @"Pending card %@ — what context did this come from, and is it still valid?", pid]];
     [self hudAsk:nil];
 }
 
@@ -1935,7 +1936,7 @@ static NSString *hudTimeShort(NSString *iso) {
     @try { [t launch]; } @catch (NSException *ex) { btn.enabled = YES; }
 }
 
-// 미결 행의 "완료" 버튼 — gari resolve 실행 후 재조회
+// "Done" button on a pending row — runs gari resolve, then refreshes
 - (void)resolvePending:(NSButton *)btn {
     if (btn.identifier.length == 0) return;
     btn.enabled = NO;
@@ -1951,7 +1952,7 @@ static NSString *hudTimeShort(NSString *iso) {
     @catch (NSException *ex) { [self fetchHud]; }
 }
 
-// 패널 질문창 제출 (Enter)
+// submit the panel question box (Enter)
 - (void)hudAsk:(id)sender {
     NSString *q = [self.hudInput.string stringByTrimmingCharactersInSet:
                    NSCharacterSet.whitespaceAndNewlineCharacterSet];
@@ -1959,9 +1960,9 @@ static NSString *hudTimeShort(NSString *iso) {
     self.lastQ = q;
     self.lastA = @"";
     self.asking = YES;
-    self.hudMode = 1;   // 질문하면 대화 탭으로
+    self.hudMode = 1;   // asking switches to the chat tab
     [self buildHud];
-    NSView *sd = self.hudScroll.documentView;   // 전송 = 내 말풍선이 있는 맨 아래로
+    NSView *sd = self.hudScroll.documentView;   // send = jump to the bottom where my bubble is
     [sd scrollPoint:NSMakePoint(0, MAX(0, sd.frame.size.height - self.hudScroll.frame.size.height))];
     [self.askTimer invalidate];
     self.lastAskStatus = @"";
@@ -1975,7 +1976,7 @@ static NSString *hudTimeShort(NSString *iso) {
             if (self.asking && self.hudWindow.isVisible && self.hudMode == 1) [self buildChat];
         }
     }];
-    [self.hudInput setString:@""];   // 잠그지 않는다 — 잠금/해제 왕복이 포커스를 엉키게 함
+    [self.hudInput setString:@""];   // don't lock — lock/unlock round-trips tangle focus
     [self textDidChange:nil];
     [self buildHud];
 
@@ -1994,9 +1995,9 @@ static NSString *hudTimeShort(NSString *iso) {
             weakSelf.asking = NO;
             [weakSelf.askTimer invalidate];
             weakSelf.askTimer = nil;
-            weakSelf.lastQ = nil;   // 스레드(원장)가 이제 진실 — 낙관적 말풍선 제거
+            weakSelf.lastQ = nil;   // the thread (ledger) is now the truth — drop the optimistic bubble
             weakSelf.happyUntil = [NSDate dateWithTimeIntervalSinceNow:1.5];
-            weakSelf.hopV = 6.0;   // 답 가져왔어요 — 깡총
+            weakSelf.hopV = 6.0;   // got your answer — hop
             [weakSelf fetchHud];
             [weakSelf.hudWindow makeFirstResponder:weakSelf.hudInput];
         });
@@ -2004,12 +2005,12 @@ static NSString *hudTimeShort(NSString *iso) {
     @try { [t launch]; }
     @catch (NSException *ex) {
         self.asking = NO;
-        self.lastA = @"창구 연결 실패 — ~/gari/bin/gari 확인 요망";
+        self.lastA = @"Couldn't reach Gari — check GARI_HOME/bin/gari";
         [self buildHud];
     }
 }
 
-// 가리에게 묻기 — 패널 질문창에 포커스 (시스템 경고창 없음)
+// ask Gari — focus the panel question box (no system alert)
 - (void)askGari {
     if (!(self.hudWindow && self.hudWindow.isVisible)) [self openHud];
     [NSApp activateIgnoringOtherApps:YES];
@@ -2025,7 +2026,7 @@ static NSString *hudTimeShort(NSString *iso) {
         ? [[NSJSONSerialization JSONObjectWithData:d options:0 error:nil] mutableCopy] : nil;
     if (!pc) pc = [NSMutableDictionary dictionary];
     if ([hex isEqualToString:@"#FF6600"]) {
-        [pc removeObjectForKey:@"body_color"];   // 기본색 = 설정 제거
+        [pc removeObjectForKey:@"body_color"];   // default color = remove the setting
     } else {
         pc[@"body_color"] = hex;
     }
@@ -2033,30 +2034,30 @@ static NSString *hudTimeShort(NSString *iso) {
     [pc removeObjectForKey:@"belly_color"];
     [[NSJSONSerialization dataWithJSONObject:pc options:NSJSONWritingPrettyPrinted error:nil]
         writeToFile:path atomically:YES];
-    initPalette(pc);                              // 즉시 갈아입기
+    initPalette(pc);                              // change outfits immediately
     self.needsDisplay = YES;
-    self.happyUntil = [NSDate dateWithTimeIntervalSinceNow:1.5];   // 새 옷 기분
+    self.happyUntil = [NSDate dateWithTimeIntervalSinceNow:1.5];   // new-outfit mood
     self.hopV = 4.0;
 }
 
 - (void)rightMouseDown:(NSEvent *)e {
     NSMenu *m = [[NSMenu alloc] init];
-    [[m addItemWithTitle:@"현황판 (클릭)" action:@selector(toggleHud) keyEquivalent:@""] setTarget:self];
-    [[m addItemWithTitle:@"가리에게 묻기…" action:@selector(askGari) keyEquivalent:@""] setTarget:self];
-    [[m addItemWithTitle:@"보고 파일 열기" action:@selector(openReport) keyEquivalent:@""] setTarget:self];
-    [[m addItemWithTitle:@"상태 확인 (gari status)" action:@selector(openStatus) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:@"Dashboard (click)" action:@selector(toggleHud) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:@"Ask Gari…" action:@selector(askGari) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:@"Open report file" action:@selector(openReport) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:@"Check status (gari status)" action:@selector(openStatus) keyEquivalent:@""] setTarget:self];
     [m addItem:[NSMenuItem separatorItem]];
-    NSMenuItem *colorRoot = [[NSMenuItem alloc] initWithTitle:@"색상" action:nil keyEquivalent:@""];
+    NSMenuItem *colorRoot = [[NSMenuItem alloc] initWithTitle:@"Color" action:nil keyEquivalent:@""];
     NSMenu *colorMenu = [[NSMenu alloc] init];
     NSData *pcData = [NSData dataWithContentsOfFile:[GariStateReader gariPath:@"pet/pet-config.json"]];
     NSDictionary *pc = pcData ? ([NSJSONSerialization JSONObjectWithData:pcData options:0 error:nil] ?: @{}) : @{};
     NSString *curHex = [pc[@"body_color"] isKindOfClass:NSString.class]
         ? [pc[@"body_color"] uppercaseString] : @"#FF6600";
     NSArray *presets = @[
-        @[@"가리발디 주황", @"#FF6600"], @[@"코랄", @"#FF6B81"],
-        @[@"골드", @"#FFB300"], @[@"민트", @"#2EC4B6"],
-        @[@"스카이", @"#3A86FF"], @[@"라벤더", @"#8E7CFF"],
-        @[@"실버", @"#B8B8BE"]];
+        @[@"Garibaldi orange", @"#FF6600"], @[@"Coral", @"#FF6B81"],
+        @[@"Gold", @"#FFB300"], @[@"Mint", @"#2EC4B6"],
+        @[@"Sky", @"#3A86FF"], @[@"Lavender", @"#8E7CFF"],
+        @[@"Silver", @"#B8B8BE"]];
     for (NSArray *pr in presets) {
         NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:pr[0]
             action:@selector(petColorPicked:) keyEquivalent:@""];
@@ -2076,9 +2077,9 @@ static NSString *hudTimeShort(NSString *iso) {
     }
     colorRoot.submenu = colorMenu;
     [m addItem:colorRoot];
-    [[m addItemWithTitle:@"1시간 숨기기" action:@selector(hideAnHour) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:@"Hide for an hour" action:@selector(hideAnHour) keyEquivalent:@""] setTarget:self];
     [m addItem:[NSMenuItem separatorItem]];
-    [[m addItemWithTitle:@"가리 펫 종료 (본체는 계속 돎)" action:@selector(quit) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:@"Quit Gari pet (Gari keeps running)" action:@selector(quit) keyEquivalent:@""] setTarget:self];
     [NSMenu popUpContextMenu:m withEvent:e forView:self];
 }
 
@@ -2112,7 +2113,7 @@ static NSString *hudTimeShort(NSString *iso) {
 - (void)hideAnHour {
     [self.hudWindow orderOut:nil];
     [self.window orderOut:nil];
-    // 데스크톱 펫 1위 불만 = 가림. 완전 종료 대신 한 시간 자리 비움.
+    // the #1 complaint about desktop pets = they get in the way. Step away for an hour instead of quitting.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3600 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         [self.window orderFrontRegardless];
@@ -2127,12 +2128,12 @@ static NSString *hudTimeShort(NSString *iso) {
     if (m != self.mood) self.moodChangedAt = NSDate.date;
     self.mood = m; self.badge = b;
     if (self.asking && self.hudWindow.isVisible && self.hudMode == 1)
-        [self buildChat];   // 진행 단계 문구 갱신
+        [self buildChat];   // refresh the progress-stage text
     self.needsDisplay = YES;
 }
 @end
 
-// ---------------------------------------------------------------- 앱 조립
+// ---------------------------------------------------------------- app assembly
 
 @interface AppDelegate : NSObject <NSApplicationDelegate>
 @property (strong) NSWindow *window;
@@ -2152,7 +2153,7 @@ static NSString *hudTimeShort(NSString *iso) {
         NSString *sp = cj[@"spritesheet"];
         if ([sp isKindOfClass:NSString.class] && sp.length > 0) {
             sheet = [[NSImage alloc] initWithContentsOfFile:sp.stringByExpandingTildeInPath];
-            if (!sheet) NSLog(@"가리펫: 스프라이트시트 로드 실패 — 내장 픽셀로 대체: %@", sp);
+            if (!sheet) NSLog(@"GariPet: couldn't load the sprite sheet — using built-in pixels: %@", sp);
         }
     }
     NSRect screen = NSScreen.mainScreen.visibleFrame;
@@ -2162,7 +2163,7 @@ static NSString *hudTimeShort(NSString *iso) {
         NSDictionary *j = [NSJSONSerialization JSONObjectWithData:pd options:0 error:nil];
         if (j[@"x"] && j[@"y"]) {
             NSPoint saved = NSMakePoint([j[@"x"] doubleValue], [j[@"y"] doubleValue]);
-            // 저장 위치가 현재 화면 구성 안에 실제로 보이는지 검사 — 모니터가 빠지면 좌표가 화면 밖이 된다
+            // check the saved position is actually visible in the current screen setup — if a monitor is gone, coordinates fall off-screen
             NSRect savedRect = NSMakeRect(saved.x, saved.y, size.width, size.height);
             for (NSScreen *s in NSScreen.screens) {
                 if (NSIntersectsRect(savedRect, s.visibleFrame)) { origin = saved; break; }
@@ -2191,13 +2192,13 @@ static NSString *hudTimeShort(NSString *iso) {
         object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
         NSRect f = self.window.frame;
         for (NSScreen *s in NSScreen.screens)
-            if (NSIntersectsRect(f, s.visibleFrame)) return;   // 아직 보임 — 그대로
-        NSRect vis = NSScreen.mainScreen.visibleFrame;          // 화면 밖 — 주 화면 우하단으로 귀환
+            if (NSIntersectsRect(f, s.visibleFrame)) return;   // still visible — leave it
+        NSRect vis = NSScreen.mainScreen.visibleFrame;          // off-screen — return to the main screen's bottom-right
         [self.window setFrameOrigin:NSMakePoint(NSMaxX(vis) - f.size.width - 40, NSMinY(vis) + 60)];
         [self.window orderFrontRegardless];
     }];
     [NSTimer scheduledTimerWithTimeInterval:5.0 repeats:YES block:^(NSTimer *t) { [self.view refresh]; }];
-    [self chainTick];   // 적응형 틱 — 잘 때는 느리게 (상시 고빈도 웨이크업 회피)
+    [self chainTick];   // adaptive tick — slow while asleep (avoids constant high-frequency wakeups)
 }
 
 - (void)chainTick {
@@ -2209,7 +2210,7 @@ static NSString *hudTimeShort(NSString *iso) {
 }
 @end
 
-// ---------------------------------------------------------------- 자가 스냅샷 (시각 검증용)
+// ---------------------------------------------------------------- self-snapshot (for visual checks)
 
 static void renderSnapshots(NSString *outDir) {
     [NSFileManager.defaultManager createDirectoryAtPath:outDir
@@ -2225,7 +2226,7 @@ static void renderSnapshots(NSString *outDir) {
         v.breathPhase = 1.0; v.tick = 4;
         if (shots[i].happy) {
             v.happyUntil = [NSDate dateWithTimeIntervalSinceNow:5];
-            v.bubbleOverride = @"충성!";
+            v.bubbleOverride = @"Reporting for duty!";
             for (int k = 0; k < 4; k++) {
                 Heart *h = [Heart new];
                 h.x = 60 + k * 18; h.y = 95 + (k % 2) * 14; h.vy = 1; h.life = 0.9;
@@ -2237,53 +2238,53 @@ static void renderSnapshots(NSString *outDir) {
         NSData *png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
         [png writeToFile:[outDir stringByAppendingFormat:@"/pet-%s.png", shots[i].name] atomically:YES];
     }
-    // 패널 미리보기 (스타일 자가검증용 — 샘플 데이터)
+    // panel preview (for checking styles — sample data)
     v.mood = MoodAwake; v.badge = 0; v.happyUntil = nil; v.bubbleOverride = nil;
     NSView *card = [v makeHudCard:NSMakeSize(400, 500)];
     v.hudData = @{
         @"time": @"12:10",
         @"pipeline": @{@"ok": @YES, @"age_min": @5, @"cards_today": @41},
-        @"next_step": @{@"action": @"Brain-Clone 카테고리 축 확정 — 검색 문장 3개 입력",
-                        @"reason": @"RAG MVP의 마지막 블로킹 아이템 — 이게 풀려야 기억 시스템이 완성 단계로"},
-        @"question": @"검색 문장 3개, 지금 입력할까요 아니면 월요일에 모아서 할까요?",
-        @"nag": @"펫 시안 반복이 5회째인데 '좋음의 기준'이 아직 없습니다 — 레퍼런스 1장 고정하고 시작하면 왕복이 줄어듭니다.",
-        @"chat": @{@"session": @"9d89a816", @"title": @"펫 소리 논의",
-                   @"sessions": @[@{@"id": @"9d89a816", @"title": @"펫 소리 논의"}],
-                   @"thread": @[@{@"q": @"D+1 로그 확정이 무슨 내용이야?", @"a": @"Brain-Clone 메모리 시스템이 여러 세션에 자동 반영되는 구조와 관련된 미결입니다, 형님.\n\n상황: Claude-mem으로 만든 기억들(현재 404개)을 분류·연결하는 색인을 프로젝트 세션들에 자동 제공하고 있거든요. 어제 하루에 실행된 140개 세션이 이 색인을 제대로 받았는지를 서버 기록으로 확인해야 한다는 뜻입니다.\n\n왜 필요한가: 색인 주입 시스템이 실제로 작동하는지 검증하지 않으면, 지금까지 정리한 기억들이 실제 대화에서 쓰이지 못할 수도 있거든요.\n\n«참견 — 이 확인이 D+1 구간(어제 다음날)을 지정한 이유가 뭔가요? 어제/오늘의 로그로는 부족한 건가요, 아니면 시간차 효과를 재는 건가요?"},
-                                @{@"q": @"그거 언제 정했지?", @"a": @"![펫](~/gari/docs/img/gari-pet.png)\n## 확정 시점\n**2026-07-05 밤**에 정하셨습니다.\n- 해소하려면 `gari resolve ab12cd34` 실행\n- 참고: https://gari.local/cards\n\n«참견 — 이 결정의 검증 계획이 아직 없습니다.", @"ts": @"22:40"}]},
-        @"shadow": @[@{@"id": @"f1e9e032", @"text": @"같은 지시 반복 감지: 펫 크기 조정 요청 3회", @"quote": @""}],
-        @"approvals": @[@"아침 보고 시각 확정 — 현재 09:00 (config.json report_hour)"],
-        @"pendings": @[@{@"idx": @0, @"project": @"brain-clone", @"id": @"ab12cd34",
-                         @"text": @"RAG 5레이어(Vector/Keyword/SQL/Graph/API) 우선순위 결정 필요"},
+        @"next_step": @{@"action": @"Lock the search categories — enter 3 example queries",
+                        @"reason": @"The last blocker for the memory search MVP — once it's done, memory moves to the finishing stage"},
+        @"question": @"Enter the 3 example queries now, or batch them on Monday?",
+        @"nag": @"This is the 5th round on the pet mockups and there's still no definition of 'good' — pin one reference first and the back-and-forth shrinks.",
+        @"chat": @{@"session": @"9d89a816", @"title": @"Pet sound discussion",
+                   @"sessions": @[@{@"id": @"9d89a816", @"title": @"Pet sound discussion"}],
+                   @"thread": @[@{@"q": @"What does the D+1 log check mean?", @"a": @"It's a pending item about how the memory system reaches multiple sessions automatically.\n\nSituation: an index that classifies and links the memories (currently 404) is fed to project sessions automatically. The item means confirming from server logs that yesterday's 140 sessions actually received that index.\n\nWhy it matters: unless the injection is verified, the memories tidied so far may never be used in real conversations.\n\n«nudge — Why D+1 specifically? Are yesterday's/today's logs not enough, or is this measuring a delay effect?"},
+                                @{@"q": @"When did I decide that?", @"a": @"![pet](docs/img/gari-pet.png)\n## When it was decided\nDecided on **2026-07-05, evening**.\n- To close it, run `gari resolve ab12cd34`\n- Reference: https://example.com/cards\n\n«nudge — There's no verification plan for this decision yet.", @"ts": @"22:40"}]},
+        @"shadow": @[@{@"id": @"f1e9e032", @"text": @"Repeated instruction detected: pet size change asked 3 times", @"quote": @""}],
+        @"approvals": @[@"Confirm the morning report time — currently 09:00 (config.json report_hour)"],
+        @"pendings": @[@{@"idx": @0, @"project": @"gari", @"id": @"ab12cd34",
+                         @"text": @"Decide the priority of the 5 retrieval layers (vector/keyword/SQL/graph/API)"},
                        @{@"idx": @1, @"project": @"gari", @"id": @"ef56ab78",
-                         @"text": @"펫 최종 미감 판정 대기"},
+                         @"text": @"Waiting on the final look of the pet"},
                        @{@"idx": @2, @"project": @"roadmap", @"id": @"cd90ef12",
-                         @"text": @"화면 기록 권한 설정 — 사용자만 가능한 작업"}],
+                         @"text": @"Screen recording permission — only the user can do this"}],
         @"freshness": @{@"sweep_interval_min": @10, @"report_hour": @9,
                          @"morning_ts": @"2026-07-06T09:00:12", @"triage_ts": @"2026-07-06T09:00:44"},
-        @"stakes": @{@"brief": @"형님, 오늘은 배포 승인 하나가 전부를 막고 있고 — 나머지는 제가 정리해뒀습니다.",
+        @"stakes": @{@"brief": @"One deploy approval is blocking everything today — I've tidied the rest.",
                      @"total": @126,
                      @"stakes": @[
-            @{@"gain": @"승인하면 105개 테스트가 배포로 풀립니다", @"label": @"게임잼 서버 배포 승인",
+            @{@"gain": @"Approve it and 105 tests ship to production", @"label": @"Approve the demo server deploy",
               @"action": @"resolve", @"id": @"ab12cd34"},
-            @{@"gain": @"답하면 가리 기억 검색의 축이 확정됩니다", @"label": @"검색할 때 주로 뭘 찾으세요?",
+            @{@"gain": @"Answer it and Gari's memory search gets its axis", @"label": @"What do you usually search for?",
               @"action": @"input", @"id": @""},
-            @{@"gain": @"놔두면 review-board 방향이 이번 주도 표류합니다", @"label": @"열린 논의 이어가기",
+            @{@"gain": @"Leave it and the side project drifts another week", @"label": @"Continue the open discussion",
               @"action": @"chat", @"id": @""}]},
-        @"compass": @[@{@"project": @"solo-game-launch", @"identity": @"사내 게임 대회 출품용 모바일 채굴 게임",
-                        @"next": @"대회 공식 심사 기준·마감일 확인 — 유일한 외부 블로커", @"activity": @29},
-                      @{@"project": @"review-board", @"identity": @"크리에이티브 리뷰·협업 보드 도구",
-                        @"next": @"상품화 포지셔닝(Focal 재정리) 결정", @"activity": @10}],
+        @"compass": @[@{@"project": @"demo-game", @"identity": @"A small mobile mining game for a game jam",
+                        @"next": @"Check the jam's judging criteria and deadline — the only outside blocker", @"activity": @29},
+                      @{@"project": @"review-board", @"identity": @"A creative review and collaboration board",
+                        @"next": @"Decide the product positioning", @"activity": @10}],
         @"triage": @{@"ts": @"2026-07-06T09:00:44",
-                     @"now": @{@"id": @"ab12cd34", @"why": @"RAG MVP 마지막 블로킹"},
-                     @"done_like": @[@{@"id": @"ef56ab78", @"evidence": @"오늘 16:31 미감 확정 카드"}],
+                     @"now": @{@"id": @"ab12cd34", @"why": @"the last memory-search MVP blocker"},
+                     @"done_like": @[@{@"id": @"ef56ab78", @"evidence": @"look-confirmed card today at 16:31"}],
                      @"dupes": @[], @"snooze": @[]},
-        @"decisions": @[@{@"project": @"roadmap", @"text": @"가리 펫은 가리발디 물고기 — 단색 + 눈만"},
-                        @{@"project": @"roadmap", @"text": @"패널에 질문창 내장"}],
-        @"corrections": @[@{@"text": @"가리 현황판 가독성 개선 — 판매 품질로"}],
-        @"wins": @[@{@"text": @"사용성 체크리스트 10개 중 9.5 준수"}],
+        @"decisions": @[@{@"project": @"gari", @"text": @"Gari's pet is a Garibaldi fish — solid color + eyes only"},
+                        @{@"project": @"gari", @"text": @"Put a question box inside the panel"}],
+        @"corrections": @[@{@"text": @"Improve dashboard readability — to shipping quality"}],
+        @"wins": @[@{@"text": @"9.5 of 10 usability checklist items met"}],
     };
-    [v buildHud];   // 톱 상태 (문답 없음)
+    [v buildHud];   // top state (no Q&A)
     NSBitmapImageRep *prep = [card bitmapImageRepForCachingDisplayInRect:card.bounds];
     [card cacheDisplayInRect:card.bounds toBitmapImageRep:prep];
     [[prep representationUsingType:NSBitmapImageFileTypePNG properties:@{}]
@@ -2296,19 +2297,19 @@ static void renderSnapshots(NSString *outDir) {
 
     v.hudMode = 1;
     v.asking = YES;
-    v.lastQ = @"north-star에서 판정 기준 6개가 뭐였지?";
-    [v buildHud];   // 대화 탭 + 진행 중 상태
+    v.lastQ = @"What were the 6 judging criteria in the north star?";
+    [v buildHud];   // chat tab + in-progress state
     NSBitmapImageRep *prep2 = [card bitmapImageRepForCachingDisplayInRect:card.bounds];
     [card cacheDisplayInRect:card.bounds toBitmapImageRep:prep2];
     [[prep2 representationUsingType:NSBitmapImageFileTypePNG properties:@{}]
         writeToFile:[outDir stringByAppendingString:@"/panel-chat.png"] atomically:YES];
-    printf("스냅샷 6장 저장: %s\n", outDir.UTF8String);
+    printf("Saved 6 snapshots: %s\n", outDir.UTF8String);
 }
 
 static void renderIcon(NSString *outPath) {
     PetView *v = [[PetView alloc] initWithFrame:NSMakeRect(0, 0, 150, 112)];
     v.mood = MoodAwake; v.badge = 0; v.breathPhase = 1.0; v.tick = 4;
-    CGFloat S = 6.5;   // 물고기(약 65x50pt)가 512 캔버스를 꽉 채우게
+    CGFloat S = 6.5;   // the fish (~65x50pt) fills the 512 canvas
     NSBitmapImageRep *rep = [[NSBitmapImageRep alloc]
         initWithBitmapDataPlanes:NULL pixelsWide:512 pixelsHigh:512 bitsPerSample:8
         samplesPerPixel:4 hasAlpha:YES isPlanar:NO
@@ -2317,7 +2318,7 @@ static void renderIcon(NSString *outPath) {
     [NSGraphicsContext saveGraphicsState];
     NSGraphicsContext.currentContext = ctx;
     NSAffineTransform *tf = [NSAffineTransform transform];
-    // 뷰가 아니라 '물고기'를 캔버스 중앙에: 물고기 중심 ≈ 뷰 좌표 (75, 45)
+    // center the fish, not the view, on the canvas: fish center ≈ view coords (75, 45)
     [tf translateXBy:256 - 75 * S yBy:256 - 45 * S];
     [tf scaleBy:S];
     [tf concat];
@@ -2325,12 +2326,12 @@ static void renderIcon(NSString *outPath) {
     [NSGraphicsContext restoreGraphicsState];
     [[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}]
         writeToFile:outPath atomically:YES];
-    printf("아이콘 원판 저장: %s\n", outPath.UTF8String);
+    printf("Saved icon master: %s\n", outPath.UTF8String);
 }
 
 int main(int argc, const char *argv[]) {
-    // 단일 인스턴스 잠금 — 어느 문(CLI·Gari.app·launchd)으로 열어도 펫은 한 마리
-    // (앱 실행 시 시스템이 숨은 인자를 붙이므로 인자 유무가 아니라 "유틸리티 모드 여부"로 판정)
+    // single-instance lock — whichever door opens it (CLI, Gari.app, launchd), there's only one pet
+    // (the system adds hidden arguments when launching the app, so decide by "utility mode", not by whether args exist)
     BOOL utility = (argc >= 2 && (strcmp(argv[1], "--icon") == 0 ||
                                   strcmp(argv[1], "--measure") == 0 ||
                                   strcmp(argv[1], "--snapshot") == 0));
@@ -2338,9 +2339,9 @@ int main(int argc, const char *argv[]) {
         NSString *lockPath = [GariStateReader gariPath:@"pet/instance.lock"];
         int lockFd = open(lockPath.UTF8String, O_CREAT | O_RDWR, 0644);
         if (lockFd < 0 || flock(lockFd, LOCK_EX | LOCK_NB) != 0) {
-            return 0;   // 이미 떠 있음(또는 잠금 불가) — 조용히 종료
+            return 0;   // already running (or can't lock) — exit quietly
         }
-        // lockFd는 의도적으로 열어둔 채 유지 — 프로세스 종료 시 OS가 잠금 해제
+        // lockFd is intentionally kept open — the OS releases the lock when the process exits
     }
     @autoreleasepool {
         if (argc >= 3 && strcmp(argv[1], "--icon") == 0) {
@@ -2354,21 +2355,21 @@ int main(int argc, const char *argv[]) {
             initPalette(@{});
             NSString *body = [NSString stringWithContentsOfFile:
                 [NSString stringWithUTF8String:argv[2]]
-                encoding:NSUTF8StringEncoding error:nil] ?: @"(파일 없음)";
+                encoding:NSUTF8StringEncoding error:nil] ?: @"(no file)";
             PetView *v = [[PetView alloc] initWithFrame:NSMakeRect(0, 0, 150, 112)];
             NSView *card = [v makeHudCard:NSMakeSize(400, 500)];
             (void)card;
-            v.hudData = @{@"chat": @{@"session": @"m", @"title": @"측정",
+            v.hudData = @{@"chat": @{@"session": @"m", @"title": @"measure",
                                      @"sessions": @[],
-                                     @"thread": @[@{@"q": @"측정용 질문", @"a": body, @"ts": @"00:00"}]}};
+                                     @"thread": @[@{@"q": @"measurement question", @"a": body, @"ts": @"00:00"}]}};
             v.hudMode = 1;
             [v buildHud];
             NSView *doc = v.hudScroll.documentView;
-            fprintf(stderr, "[doc] 높이=%.0f (입력 %lu자)\n",
+            fprintf(stderr, "[doc] height=%.0f (input %lu chars)\n",
                     doc.frame.size.height, (unsigned long)body.length);
             for (NSView *sub in doc.subviews)
                 if (sub.frame.size.height > 100)
-                    fprintf(stderr, "[bubble] h=%.0f 내부뷰h=%.0f\n",
+                    fprintf(stderr, "[bubble] h=%.0f innerViewH=%.0f\n",
                             sub.frame.size.height,
                             sub.subviews.firstObject.frame.size.height);
             return 0;

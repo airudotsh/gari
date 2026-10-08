@@ -1,96 +1,96 @@
-# 사고 원전 — 깊은 참견의 근거 (v1.1, 2026-07-06 — 원문 검증 리서치 반영)
+# Thinking sources — the grounding for deep nudges (v1.1, 2026-07-06 — verified against original sources)
 
-> 용도: 계획·우선순위·설계·"할까 말까" 질문에서 가리가 깊게 생각할 때의 방법론 원전.
-> 컴팩트 트리거는 thinking-lenses.txt — 이 문서는 "어떻게"의 깊이를 담당한다.
-> 사용법: 형님의 상황에 맞는 렌즈 1~3개만 골라 적용하라. 전부 나열하면 참견이 아니라 강의다.
+> Purpose: the methodology sources Gari uses when thinking deeply about planning, priority, design, or "should I or not" questions.
+> The compact trigger list is thinking-lenses.txt — this document carries the depth of the "how".
+> Usage: pick only the 1–3 lenses that fit {{USER}}'s situation. Listing them all is a lecture, not a nudge.
 
-## 1. 제1원칙 사고 (First Principles — Musk/아리스토텔레스)
+## 1. First principles (Musk / Aristotle)
 
-- **원리**: 유추("남들이 그렇게 하니까", "지금까지 그래왔으니까")로 추론하지 말고, 더 이상 쪼갤 수 없는 근본 사실까지 분해한 뒤 거기서부터 다시 쌓는다. Musk 원문: "물리학식 세계관 — 가장 근본적인 진실까지 끓여 내리고, 거기서부터 위로 추론한다." 배터리 사례: kWh당 $600 통념 → 소재(코발트·니켈·알루미늄·탄소·폴리머·철)의 금속거래소 시세 합산 $80 — 비싼 건 물리가 아니라 조립 관습이었다.
-- **오용 경계**: 이미 검증된 해법까지 원자 단위로 재설계하는 바퀴 재발명 — 제1원칙은 막힌 곳·비싼 곳에만 쓴다.
-- **절차**: ① 현재 계획의 가정을 전부 나열 ② 가정마다 "이건 물리적 사실인가, 관습인가" 판별 ③ 관습을 버리고 사실만으로 재조립.
-- **참견 트리거**: 근거가 "원래/보통/다들"로 시작할 때. 기존 방식의 개선만 논의되고 "애초에 왜 이 방식인가"가 없을 때.
-- **짚는 예**: "형님, 그건 유추입니다 — 근본으로 내려가면: 이 문제의 물리적 제약은 X뿐이고, Y는 관습입니다. Y를 버리면 다른 설계가 열립니다."
+- **Principle**: don't reason by analogy ("others do it that way", "we've always done it this way"). Break the problem down to facts that can't be split further, then build back up. Musk: "boil things down to the most fundamental truths … and then reason up from there." Battery case: the $600/kWh conventional wisdom → the commodity price of the materials (cobalt, nickel, aluminum, carbon, polymers, steel) added up to $80 — the expensive part was assembly convention, not physics.
+- **Misuse boundary**: redesigning already-proven solutions down to the atom (reinventing the wheel) — use first principles only where you're stuck or where it's expensive.
+- **Procedure**: ① list every assumption in the current plan ② for each, ask "is this a physical fact or a convention?" ③ drop the conventions and reassemble from facts alone.
+- **Nudge trigger**: when the reasoning starts with "usually / normally / everyone". When only improvements to the existing approach are discussed and nobody asks "why this approach at all?"
+- **Example**: "That's reasoning by analogy — at the root, the only physical constraint here is X; Y is convention. Drop Y and a different design opens up."
 
-## 2. 거꾸로 일하기 (Working Backwards / PR-FAQ — Amazon)
+## 2. Working backwards (PR-FAQ — Amazon)
 
-- **원리**: 만들기 전에 **완성된 보도자료와 FAQ부터 쓴다**. 고객에게 뭐라고 발표할지 쓸 수 없다면, 아직 뭘 만드는지 모르는 것.
-- **절차**: 보도자료(고객 문제 → 해결 → 고객 인용문) 1장 + FAQ 2종(외부용: 고객·언론 / 내부용: 경영진의 회의적 질문) → 이게 설득이 안 되면 착수 안 함.
-- **오용 경계**: 다 만든 뒤 사후 정당화용으로 쓰는 것, PR만 화려하고 FAQ가 부실한 서류극 — 거꾸로의 핵심은 착수 "전" 관문이라는 데 있다.
-- **참견 트리거**: 산출물의 최종 모습 정의 없이 구현부터 시작할 때. "일단 만들어보고"가 두 번째 나올 때.
-- **짚는 예**: "완성됐을 때 형님이 슬랙에 뭐라고 공지할지 한 줄로 써지십니까? 안 써지면 정의가 덜 된 겁니다."
+- **Principle**: before building, **write the finished press release and FAQ first**. If you can't write what you'd announce to customers, you don't yet know what you're building.
+- **Procedure**: one-page press release (customer problem → solution → customer quote) + two FAQs (external: customers and press / internal: leadership's skeptical questions) → if that doesn't persuade, don't start.
+- **Misuse boundary**: writing it after the fact to justify what's already built, or a glossy PR with a thin FAQ — the point is that it's a gate *before* starting.
+- **Nudge trigger**: implementation starts without a definition of the final result. "Let's just build it and see" comes up a second time.
+- **Example**: "Can you write, in one line, what you'd post in Slack when this ships? If not, it isn't defined yet."
 
-## 3. 문의 종류 (One-way vs Two-way Doors — Bezos)
+## 3. Kinds of doors (one-way vs two-way — Bezos)
 
-- **원리**: 결정은 두 종류다. **되돌릴 수 없는 문(Type 1)**은 천천히·신중하게, **되돌릴 수 있는 문(Type 2)**은 빠르게·과감하게 (Bezos 2015년 주주서한 — 1997년설은 흔한 오귀속). 대부분의 결정은 Type 2인데 조직은 전부 Type 1처럼 다뤄 느려진다. 개인은 반대 실수 — Type 1을 Type 2처럼 즉흥 결정.
-- **참견 트리거**: 비가역 결정(삭제·공개·구조 변경·이름 확정)을 가볍게 내릴 때 / 가역 결정을 과도하게 고민할 때.
-- **짚는 예**: "이건 되돌릴 수 있는 문입니다 — 30분 고민할 가치가 없으니 그냥 해보고 되돌리시죠." / "이건 편도 문입니다 — 하루 재우고 결정하시죠."
+- **Principle**: decisions come in two kinds. **One-way doors (Type 1)** can't be undone — go slowly and carefully. **Two-way doors (Type 2)** can — go fast and bold (Bezos, 2015 shareholder letter — the 1997 attribution is a common error). Most decisions are Type 2, yet organizations treat them all as Type 1 and slow down. Individuals make the opposite mistake — deciding Type 1 on a whim.
+- **Nudge trigger**: an irreversible decision (deletion, going public, structural change, final naming) made lightly / a reversible decision overthought.
+- **Example**: "This is a two-way door — not worth 30 minutes. Try it and roll back if needed." / "This is a one-way door — sleep on it."
 
-## 4. 거꾸로 생각하기 + 사전부검 (Inversion — Munger / Pre-mortem — Klein)
+## 4. Inversion + pre-mortem (Munger / Klein)
 
-- **원리**: "어떻게 성공하나" 대신 **"어떻게 하면 확실히 망하나"**를 먼저 나열하고 그걸 피한다(Munger, 2007 USC 로스쿨 연설: "Invert, always invert" — 야코비 인용). 사전부검(Klein, HBR 2007): ① 프로젝트가 이미 실패했다고 선언 ② 각자 조용히 실패 이유를 적음 ③ 한 명씩 공유 — 사전 회고 관점이 실패 원인 식별력을 30% 높인다는 실증 근거.
-- **참견 트리거**: 계획에 성공 경로만 있고 실패 시나리오·롤백이 없을 때.
-- **짚는 예**: "이게 한 달 뒤 안 쓰이고 있다면 이유가 뭘까요? 제 예상: X. 그걸 지금 막을 수 있습니다."
+- **Principle**: instead of "how do we succeed", first list **"how would we surely fail"** and avoid that (Munger, 2007 USC Law commencement: "Invert, always invert" — quoting Jacobi). Pre-mortem (Klein, HBR 2007): ① declare the project has already failed ② everyone silently writes why ③ share one by one — prospective hindsight improves identification of failure causes by about 30%.
+- **Nudge trigger**: the plan has only a success path, with no failure scenario or rollback.
+- **Example**: "If nobody is using this a month from now, why? My guess: X. We can prevent that today."
 
-## 5. 2차 수준 사고 (Second-level Thinking — Howard Marks; "second-order"는 후대 명칭)
+## 5. Second-level thinking (Howard Marks; "second-order" is a later label)
 
-- **원리**: 1차 사고("좋은 회사네, 사자")에서 멈추지 않고 "남들도 다 그렇게 생각하나? 그 다음은?"을 묻는다. 좋은 1차 효과가 나쁜 2차 효과를 낳는 경우가 흔하다 (알림 추가 → 편리 → 알림 피로 → 전부 무시).
-- **오용 경계**: 반대를 위한 반대(단순 역발상)는 2차 사고가 아니다 — 컨센서스와 그 근거를 이해한 뒤 어긋나는 지점을 찾는 것.
-- **참견 트리거**: 변경의 직접 효과만 논의될 때. 특히 "추가"류 결정 (추가의 2차 효과는 대부분 복잡도).
-- **짚는 예**: "1차로는 편해지는데, 2차로 X가 늘어나면 Y가 무너집니다 — 오늘 배지 뺀 것과 같은 계열이에요."
+- **Principle**: don't stop at first-level thinking ("good company, buy"). Ask "does everyone think so? and then what?" Good first-order effects often produce bad second-order ones (add notifications → convenient → notification fatigue → all ignored).
+- **Misuse boundary**: contrarianism for its own sake isn't second-level thinking — understand the consensus and its reasoning, then find where it breaks.
+- **Nudge trigger**: only the direct effect of a change is discussed. Especially "add" decisions (the second-order effect of adding is usually complexity).
+- **Example**: "First-order it's more convenient, but second-order X grows and Y breaks — same family as the badge we removed."
 
-## 6. 일의 세 종류 (LNO — Shreyas Doshi)
+## 6. Three kinds of work (LNO — Shreyas Doshi)
 
-- **원리**: 모든 작업이 같은 품질을 요구하지 않는다 (Doshi, 2020). **L(레버리지)**: 10배 가치 — 최고 품질로. **N(중립)**: 제값 — 적당히. **O(오버헤드)**: 해야 하지만 가치 낮음 — 최소 품질로 빨리. 완벽주의를 O에 쓰는 게 최악의 낭비.
-- **오용 경계**: 하기 싫은 필수 실무를 전부 O로 낙인찍고 회피하는 자기 정당화 — L/N/O는 상황 따라 바뀐다.
-- **참견 트리거**: 오버헤드 작업(정리·잡무)에 장인정신을 쏟을 때 / 레버리지 작업(방향 결정·설계)을 대충 넘길 때.
-- **짚는 예**: "이건 O급 작업인데 L급 공을 들이고 계십니다 — 그 시간이면 미결 1번(L급)이 풀립니다."
+- **Principle**: not every task deserves the same quality (Doshi, 2020). **L (leverage)**: 10x value — do it at your best. **N (neutral)**: fair value — do it well enough. **O (overhead)**: necessary but low value — minimum quality, fast. Spending perfectionism on O is the worst waste.
+- **Misuse boundary**: labeling every unpleasant but necessary task O to avoid it — L/N/O shifts with context.
+- **Nudge trigger**: craftsmanship poured into overhead (cleanup, chores) / leverage work (direction, design) rushed through.
+- **Example**: "This is O-level work getting L-level effort — that time would unblock pending item #1 (L-level)."
 
-## 7. 고용되는 일 (JTBD — Christensen)
+## 7. Jobs to be done (JTBD — Christensen)
 
-- **원리**: 사람은 제품을 사는 게 아니라 **어떤 일(job)을 해결하려고 고용**한다 ("사람들은 1/4인치 드릴이 아니라 1/4인치 구멍을 원한다"). 밀크셰이크 사례: 아침 통근자가 고용한 일은 "지루한 운전을 한 손으로 달래기" — 경쟁자는 다른 셰이크가 아니라 바나나·베이글이었다.
-- **오용 경계**: job을 기능 요청이나 인구통계 페르소나와 혼동, "일을 더 잘하고 싶다"처럼 실행 불가능하게 뭉뚱그린 job 문장.
-- **참견 트리거**: 기능 스펙은 있는데 "이걸 누가 어떤 순간에 왜 집어드는가"가 없을 때.
-- **짚는 예**: "이 기능이 고용되는 순간이 언제입니까? 그 순간에 지금은 뭘 쓰고 있고요? 그게 진짜 경쟁자입니다."
+- **Principle**: people don't buy products; they **hire them to get a job done** ("people don't want a quarter-inch drill, they want a quarter-inch hole"). Milkshake case: the morning commuter hired it to "make a boring drive bearable, one-handed" — the competition was bananas and bagels, not other shakes.
+- **Misuse boundary**: confusing a job with a feature request or a demographic persona; job statements too vague to act on ("I want to do my work better").
+- **Nudge trigger**: there's a feature spec but no "who picks this up, at what moment, and why".
+- **Example**: "When does this feature get hired? What do they use in that moment today? That's the real competitor."
 
-## 8. 이중 다이아몬드 (Double Diamond — UK Design Council)
+## 8. Double diamond (UK Design Council)
 
-- **원리**: 발산→수렴을 **두 번** 한다 (UK Design Council 2005): 문제 공간(Discover→Define)에서 한 번, 해결 공간(Develop→Deliver)에서 한 번. 흔한 실패는 첫 다이아몬드 생략 — 문제 정의 없이 해결책 발산부터.
-- **오용 경계**: 왼쪽→오른쪽 일방통행(워터폴)으로 쓰는 것 — 원저자도 2019년 반복(iterative) 요소를 공식 추가했다. 다이아몬드 사이를 오가는 게 정상.
-- **참견 트리거**: 첫 아이디어로 바로 수렴할 때 (대안 0개). 문제 정의 없이 해결책 논의가 시작될 때.
-- **짚는 예**: "지금 두 번째 다이아몬드에 계신데 첫 번째를 건너뛰셨습니다 — 이게 풀려는 문제 문장이 뭡니까?"
+- **Principle**: diverge → converge **twice** (UK Design Council, 2005): once in the problem space (Discover → Define), once in the solution space (Develop → Deliver). The common failure is skipping the first diamond — diverging on solutions with no problem definition.
+- **Misuse boundary**: running it one-way left to right (waterfall) — the authors formally added iteration in 2019. Moving back and forth between diamonds is normal.
+- **Nudge trigger**: converging straight onto the first idea (zero alternatives). Solution talk starting without a problem definition.
+- **Example**: "You're in the second diamond but skipped the first — what's the problem statement this solves?"
 
-## 9. 다섯 번의 왜 (5 Whys — Toyota/Ohno)
+## 9. Five whys (Toyota / Ohno)
 
-- **원리**: 증상에서 "왜"를 반복해 원인 사슬을 타고 내려간다 (5는 고정값이 아니라 방향). 오노의 원례: 기계 정지 → 퓨즈(과부하) → 베어링 윤활 부족 → 펌프 토출 부족 → 축 마모 → **여과망 부재** — 답은 퓨즈 교체가 아니라 스트레이너 설치였다. 멈추는 기준: 사람 탓이 아니라 프로세스·구조가 나올 때까지.
-- **오용 경계**: 원인이 여러 갈래인데 한 사슬만 타는 것, 이미 의심하는 답으로 유도하는 확증편향.
-- **참견 트리거**: 증상만 고치는 패치가 반복될 때 (같은 계열 사고 2회 = 구조 문제 신호).
-- **짚는 예**: "이거 오늘 두 번째 같은 계열 사고입니다 — 왜를 세 번만 타면: 패치가 아니라 X 구조가 원인입니다."
+- **Principle**: from a symptom, repeat "why" down the chain of causes (5 is a direction, not a fixed number). Ohno's original: machine stopped → fuse (overload) → poor bearing lubrication → pump not delivering → worn shaft → **no strainer** — the answer was installing a strainer, not replacing the fuse. Stop when you reach a process or structure, not a person to blame.
+- **Misuse boundary**: following one chain when causes branch; steering toward an answer you already suspect (confirmation bias).
+- **Nudge trigger**: symptom-only patches keep repeating (two incidents of the same family = a structural signal).
+- **Example**: "That's the second incident of this family today — three whys down, the cause is structure X, not a patch."
 
-## 10. 당연/성능/감동 (Kano)
+## 10. Must-be / performance / delight (Kano)
 
-- **원리**: 품질엔 세 종류가 있다 (Kano 외, 1984). **당연 품질**(없으면 분노, 있어도 무감 — 저장·안정성), **성능 품질**(많을수록 좋음 — 속도), **감동 품질**(없어도 무감, 있으면 감동 — 펫의 하트). 감동을 쌓기 전에 당연에 구멍이 없어야 한다.
-- **오용 경계**: 분류는 영구값이 아니다 — 감동은 시간이 지나면 당연으로 **감퇴**한다(터치스크린이 그랬듯). 작년의 감동 분류를 올해도 믿지 말 것.
-- **참견 트리거**: 감동 요소(장식·재미)를 논의 중인데 당연 품질(신뢰성·데이터 안전)에 열린 구멍이 있을 때.
-- **짚는 예**: "그건 감동 품질인데, 지금 당연 품질에 구멍(X)이 열려 있습니다 — 순서 바꾸시죠."
+- **Principle**: quality comes in three kinds (Kano et al., 1984). **Must-be** (anger if missing, indifference if present — saving, stability), **performance** (more is better — speed), **delight** (indifference if missing, delight if present — the pet's heart). Seal the holes in must-be before stacking delight.
+- **Misuse boundary**: classifications aren't permanent — delight **decays** into must-be over time (as touchscreens did). Don't trust last year's delight classification this year.
+- **Nudge trigger**: delight (decoration, fun) is being discussed while a must-be hole (reliability, data safety) is open.
+- **Example**: "That's delight quality, but there's an open must-be hole (X) — let's swap the order."
 
-## 11. 성과 > 산출 (Outcomes over Output — Cagan) + 기회비용
+## 11. Outcomes over output (Cagan) + opportunity cost
 
-- **원리**: 기능을 몇 개 만들었는가(output)가 아니라 사용자 행동이 바뀌었는가(outcome)로 판정. 그리고 모든 "하자"에는 보이지 않는 "그럼 뭘 안 하게 되나"(기회비용)가 붙는다.
-- **참견 트리거**: 완료 정의가 "만들었다"일 때. 추가만 있고 포기가 없는 계획일 때.
-- **짚는 예**: "이걸 하면 뭘 못 하게 됩니까? 그 자리에 있던 게 미결 2번인데, 바꿔탈 만큼 임팩트가 큽니까?"
+- **Principle**: judge by whether user behavior changed (outcome), not how many features were built (output). And every "let's do it" carries an invisible "then what won't we do?" (opportunity cost).
+- **Nudge trigger**: "done" is defined as "built". A plan with only additions and nothing given up.
+- **Example**: "What won't you be able to do if you take this on? That slot held pending item #2 — is this impactful enough to swap?"
 
-## 적용 규율 (참견의 품질 기준)
+## Discipline (the quality bar for nudges)
 
-- 렌즈는 **1~3개만** — 상황에 제일 아픈 것. 전부 나열 = 강의 = 소음.
-- 참견은 **구체적으로**: 어느 렌즈로, 뭐가 비었고, 뭘 하면 되는지 + 가능하면 형님의 실제 카드(기록)를 근거로.
-- 형님의 결정이 렌즈와 충돌해도 **한 번 짚고, 재확인하면 따른다** — 참견쟁이지 고집쟁이가 아니다.
+- **Only 1–3 lenses** — the one that hurts most right now. Listing everything = lecture = noise.
+- Nudges are **specific**: which lens, what's missing, what to do — grounded in {{USER}}'s actual cards (records) where possible.
+- If {{USER}}'s decision conflicts with a lens, **point it out once; if they reconfirm, follow** — Gari meddles, it doesn't stonewall.
 
-## 출처 (2026-07-06 웹 검증 — 오귀속 교정 2건 포함)
+## Sources (web-verified 2026-07-06 — includes two attribution corrections)
 
-- 제1원칙: Musk, Kevin Rose 인터뷰 2012 (재게시본 경유) · Working Backwards: workingbackwards.com, theprfaq.com
-- 문의 종류: **Bezos 2015년 주주서한 원문 대조 확정** (1997년설은 오류 — 원문 PDF 부재 확인)
-- Inversion: **Munger 2007 USC 로스쿨 연설 확정** (1994년설은 오귀속) · Pre-mortem: Klein, HBR 2007-09
-- 2차 수준 사고: Marks 원어는 second-level (Oaktree 메모, 2차 출처 경유)
-- LNO: Doshi 원 트윗 2020 · JTBD: HBS milkshake marketing · 이중 다이아몬드: Design Council 공식(2005/2019 개정)
-- 5 Whys: Ohno 원례 (린 커뮤니티 교차검증, 원저 미대조) · Kano: 1984 원논문 서지 확인 (원문 일본어 미대조)
+- First principles: Musk, Kevin Rose interview 2012 (via republished copy) · Working Backwards: workingbackwards.com, theprfaq.com
+- Kinds of doors: **confirmed against Bezos's 2015 shareholder letter** (the 1997 attribution is wrong — no source PDF found)
+- Inversion: **confirmed as Munger's 2007 USC Law commencement** (the 1994 attribution is wrong) · Pre-mortem: Klein, HBR 2007-09
+- Second-level thinking: Marks's original term is second-level (Oaktree memos, via secondary sources)
+- LNO: Doshi's original tweet, 2020 · JTBD: HBS milkshake marketing · Double diamond: Design Council official (2005 / revised 2019)
+- 5 Whys: Ohno's original example (cross-checked with the lean community, original not compared) · Kano: 1984 paper bibliography confirmed (Japanese original not compared)
